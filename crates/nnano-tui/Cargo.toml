@@ -1,0 +1,16 @@
+[package]
+name = "nnano-tui"
+description = "Terminal layer for nnano: raw mode, rendering, overlays, keymap, mouse regions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nnano-core = { path = "../nnano-core" }
+ratatui = { version = "=0.30.2", default-features = false,
+            features = ["crossterm", "layout-cache", "macros",
+                        "scrolling-regions", "underline-color"] }
+crossterm = "=0.29.0"
+
+[dev-dependencies]
+insta = "=1.49.0"

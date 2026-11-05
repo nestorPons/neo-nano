@@ -1,0 +1,13 @@
+[package]
+name = "nnano-core"
+description = "Editor semantics for nnano: rope buffer, nano operations, config registry. No terminal knowledge."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ropey = "=1.6.1"
+regex-lite = "=0.1.9"
+toml = "=0.9.12"
+unicode-width = "=0.2.3"
+unicode-segmentation = "=1.13.3"

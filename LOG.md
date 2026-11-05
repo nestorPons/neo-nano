@@ -1,0 +1,57 @@
+# Change log
+
+## 2026-11-04
+- Created `AGENTS.md` (initial probe: repo empty, stack unknown).
+- Rewrote `AGENTS.md` in English with project definition: Rust nano rewrite `nnano`, product requirements, open decisions, language policy.
+- Decided keymap: desktop-first. Added conflict-resolution table; conflicting nano bindings removed, non-conflicting ones kept.
+- Created shortcut reference in 4 languages: `docs/{en,es,zh-Hans,ja}/shortcuts.md`.
+- Created `docs/es/resumen-atajos.md`: schematized summary of the shortcut docs and its decisions.
+- Created `LOG.md`.
+- Created `PLAN.md`: TUI stack decided as `ratatui 0.30` + `crossterm 0.29`, custom text buffer, single-threaded loop, single crate, TOML config; deps, module layout, phases, risks and open items. Still no scaffolding.
+- Added `## Text model: rope (decided 2026-11-04)` to `AGENTS.md`: rope per buffer instead of nano's linked list of lines or a piece table; rationale dimensional (O(log n) edits, no per-line allocation, cached line/column lookups), binding consequences (O(n) load, line API on top, `^K`/`^U` as range ops, bytes as loaded) and the still-open sub-decisions (`ropey` vs in-house, chunking). Basis: analysis of GNU nano 9.3 (`linestruct`) and of the VS Code piece tree / Atom `superstring`.
+- Reconciled `AGENTS.md` with the rope decision: stack section renamed to "Stack and architecture", `### Text model` now defers to the rope section (cursor = `(line, byte offset)`, undo = byte-range log, no `Vec<Line>` mirror), module layout says `buffer/ rope buffer`.
+- Deleted `PLAN.md` (per user instruction): its content was absorbed into `AGENTS.md` and it still described the rejected `Vec<Line>` model.
+- After the deletion, crate layout in `AGENTS.md` changed to a workspace (`nnano-core`, `nnano-tui`, `nnano` with one-way deps). Fixed the stale `## Verification` line that still said "single crate, so no `-p` flag": now `cargo test <name>` / `cargo test -p nnano-core <name>`.
+- Deleted `PLAN.md`. `AGENTS.md` is now the single AI-facing document for stack, architecture and text model; no separate plan file exists.
+- `AGENTS.md`: explicit ban on every async runtime (tokio/async-std/smol), not just tokio; `std::thread` + channel is the only escape hatch.
+- `AGENTS.md`: added `## Configuration` — XDG TOML (`$XDG_CONFIG_HOME/nnano/config.toml`), system `/etc/nnano`, read-only `~/.nanorc` / `$XDG_CONFIG_HOME/nano/nanorc`, precedence `CLI > user > system > nanorc > defaults`.
+- `AGENTS.md`: added `### Option registry` — one table generates clap flags, TOML struct and overlay widgets; drift test required.
+- `AGENTS.md`: crate layout documented as three crates with one-way deps, per-crate dependency blocks, and `src/` tree remapped to `crates/*`.
+- `AGENTS.md`: added `## Product scope: v1` — save in place (real file truncated, no temp+rename), syntax highlighting and search "like nano", no split view, no file tree, no multicursor, rectangular selection yes, grouped undo, clipboard internal + OSC 52 opt-in, autosave off, recovery on, encoding detect-only, `nnano -` supported.
+- `AGENTS.md`: added subsections *Save: in place*, *Syntax highlighting: nano's model*, *Search: nano's model*, *No split view, no file tree*, *Other adopted defaults*.
+- `AGENTS.md`: reconciled `## Configuration` with the new scope — `syntax`/`color`/`icolor` are parsed into a syntax table instead of being ignored; `include` still never followed.
+- `AGENTS.md`: keymap — kept nano's `M-W`, `M-B`, `M-C`, `M-R`, `M-Y`; documented the modal `M-R` overload.
+- `AGENTS.md`: crate layout gained `syntax.rs` (parser + per-line span matcher) and the `ui/` style map; phases 4–7 and *Open items* updated (ERE engine choice, nano's `backup` default to verify).
+- `docs/*/shortcuts.md` (en, es, zh-Hans, ja): search and interface sections extended with the recovered nano keys; all four kept at 102 lines.
+- `docs/es/resumen-atajos.md`: section table, line count and decision log updated.
+- Closed every remaining decision (user answers, 2026-11-04), written into `AGENTS.md`:
+  - scaffolding **approved** (not yet run) → `## Status`, `### Layout by crate`.
+  - `nn` alias: **never** → *Product requirements → Invocation*.
+  - ERE engine: **`regex-lite`** for search + syntax, replacing the "open item" note in both sections.
+  - Rope: **`ropey`** with byte-sized chunks; version pinned at scaffolding, wrapped behind `nnano-core::buffer`. Removed the "still open" line.
+  - MSRV **1.85** + `edition 2024` as a new row in the stack table and `rust-version` in the dependency block.
+  - `file~` backup: **removed from scope** — save is truncate → write → flush; `backup`/`backupdir` are not registry options and `.nanorc` directives are ignored with a warning. Table row, *Save: in place*, phase 4 updated; the "only net is the recovery file" warning kept.
+  - Defaults adopted for the four gaps I flagged: recovery at `$XDG_STATE_HOME/nnano/recovery/` on a 2 s idle debounce, OSC 52 capped at 64 KiB, undo break fixed at 400 ms, no truecolor/theme files.
+  - `### Open items` is now explicitly **empty**, with a table of everything closed today.
+  - `ropey` + `regex-lite` added to the crate-dependency table and the `Cargo.toml` snippet.
+- Deleted `DECISIONS.md` (empty, never used); `AGENTS.md` + `LOG.md` are the only AI-facing records.
+- Fixed the contradiction in `### Option registry` (user decision: option **A**, runtime registry, no codegen):
+  - `AGENTS.md` dependency block: `clap` loses `features = ["derive"]` (builder only, minimal features); `serde` removed from `nnano-core`; `toml` kept for `toml::Table` + span-aware errors.
+  - `AGENTS.md` crate table: `nnano-core` deps no longer list `serde`.
+  - `### Option registry` rewritten: table row gains `id` (`Opt` variant) and `help`; surfaces are **generated at runtime** (clap builder, `toml::Table` validated by `kind`, same lookup for nanorc, overlay built from `kind`+`overlay`); `derive` explicitly ruled out; bool flag pairs (`--x`/`--no-x`); `ArgMatches::value_source` for layer detection; precedence as one merge over layers; "one row + one `Opt` variant". Drift test now describes variant/key/flag/default checks.
+  - Reason: `derive` expands at compile time from hand-written structs, so it cannot consume a runtime table; and the nanorc reader needs a string-keyed runtime registry anyway, so CLI and TOML reuse it instead of adding two more parsers.
+  - Module tree: `config/` now says "TOML table reader".
+
+## 2026-11-05 (cont.)
+- Closed the last implementation-level gaps before code (user-approved):
+  - `^H`: **Backspace alias**, never Replace. `AGENTS.md` keymap row changed from "deliberately unbound" to "Backspace alias"; *Terminal constraints* now says `input.rs` maps `^H` and `^?` to `Action::Backspace`. Reason: Linux console and some `TERM`s send `^H` for backspace, so "unbound" would break backspace there.
+  - Version pinning: every dependency is an exact `=x.y.z` pin in the manifests, not only in `Cargo.lock`. `ropey 2.0.0-beta.1` and `toml 1.x` exist and stay out.
+  - **MSRV 1.85 -> 1.88**, forced: `ratatui 0.30.2` (and 0.30.1) declare `rust-version = 1.88.0`; no ratatui 0.30.x builds on 1.85. ratatui 0.30 is itself decided, so the MSRV moved instead of the backend. Rejected `ratatui 0.30.0` (MSRV 1.86) to keep the newer patches. Updated: stack table, dependency block, closed-decisions table.
+  - *Open items* gained three rows; still empty.
+- Scaffolded the workspace (phase 0 of the approved layout; phase 1's `term/` + blank screen + status bar still pending):
+  - `Cargo.toml` (resolver 3, members `crates/*`, workspace `version`/`edition 2024`/`rust-version 1.88`), `.gitignore` (`/target`), `Cargo.lock` generated and kept.
+  - `crates/nnano-core`: `lib.rs` + `buffer/mod.rs`, `editor/mod.rs`, `config/mod.rs`, `search.rs`, `syntax.rs` as doc-only stubs carrying the decided invariants; deps `ropey 1.6.1`, `regex-lite 0.1.9`, `toml 0.9.12`, `unicode-width 0.2.3`, `unicode-segmentation 1.13.3`.
+  - `crates/nnano-tui`: `lib.rs` + `term/mod.rs`, `ui/mod.rs` stubs; `ratatui 0.30.2` (features `crossterm`, `layout-cache`, `macros`, `scrolling-regions`, `underline-color`, `default-features = false`), `crossterm 0.29.0`, dev-dep `insta 1.49.0`.
+  - `crates/nnano`: `main.rs` with a clap **builder** command (`nnano [FILE]`, `-` = stdin, `--help`/`--version`), three parse tests, and a stub that exits 1 with "scaffolding only". No derive, no async runtime.
+  - No `.git` init: still waits for the user.
+- Verified: `cargo build --workspace` ok; `cargo fmt --all --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (3 tests in `nnano`); `nnano --help` prints `Usage: nnano [FILE]`.

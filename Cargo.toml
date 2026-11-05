@@ -1,0 +1,14 @@
+# Workspace root. Members and their one-way dependency edges are fixed by
+# AGENTS.md (nnano -> nnano-tui -> nnano-core).
+#
+# Dependencies are declared per crate, never inherited from here, and every
+# version is an exact pin (=x.y.z).
+
+[workspace]
+resolver = "3"
+members = ["crates/nnano-core", "crates/nnano-tui", "crates/nnano"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
