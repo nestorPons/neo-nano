@@ -3,9 +3,10 @@
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
 ## Status (2026-11-05)
-- **Scaffolded** (2026-11-05): workspace `Cargo.toml`, `Cargo.lock`, `.gitignore`, three crates under `crates/` with the decided module skeleton. Builds, `fmt`, `clippy -D warnings` and `test` pass.
-- Phase 1 (workspace + `term/` + blank screen + status bar) is **not** done: `term/` and `ui/` are empty module stubs, `nnano` exits with *not implemented*.
-- No `.git` yet: repo init still waits for the user.
+- **Phase 1 done** (2026-11-05): workspace + three crates, `term/` (raw mode, alternate screen, restore guard, panic hook, `Caps`), `ui/` (blank body + reversed status bar), event loop `poll(16ms)` with `^Q` quit. Git repo initialized on `main` (one commit).
+- `nnano` currently shows a blank screen with a status bar (`nnano <version>` left, file name right); no text yet — that is phase 2.
+- `nnano-core` is still doc-only stubs (`buffer/`, `editor/`, `config/`, `search.rs`, `syntax.rs`); the option registry does not exist yet.
+- Verified in a real pty, not only in `TestBackend`: alternate screen entered/left, cursor restored, `^Q` exits 0, and `^S`/`^C`/`^Z` arrive as keys (no XOFF, no SIGINT/SIGTSTP).
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -358,6 +359,7 @@ Closed decisions:
 - Order: `cargo fmt --check` → `cargo clippy --workspace -- -D warnings` → `cargo test --workspace`.
 - Single test: `cargo test <name>`. Per crate: `cargo test -p nnano-core <name>`.
 - Editor logic tests belong in `nnano-core` and must not need a TTY; UI snapshots use `insta` + `TestBackend` in `nnano-tui`.
+- `TestBackend` is not enough for `term/`: any change there needs a pty run that asserts alternate screen in/out, cursor restore, `^Q` exit 0, and `^S`/`^C`/`^Z` reaching the app as keys. Do not commit the harness; it is a one-off script.
 - `target/` never committed. `Cargo.lock` is committed (binary project).
 
 ## Language policy

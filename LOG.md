@@ -55,3 +55,12 @@
   - `crates/nnano`: `main.rs` with a clap **builder** command (`nnano [FILE]`, `-` = stdin, `--help`/`--version`), three parse tests, and a stub that exits 1 with "scaffolding only". No derive, no async runtime.
   - No `.git` init: still waits for the user.
 - Verified: `cargo build --workspace` ok; `cargo fmt --all --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (3 tests in `nnano`); `nnano --help` prints `Usage: nnano [FILE]`.
+- Phase 1 implemented (user: "todas"), on top of the scaffold:
+  - `nnano-tui/src/term/mod.rs`: `Session` = `ratatui::try_init` (raw mode via crossterm `cfmakeraw`+`tcsetattr`, alternate screen, panic hook) + `Drop` -> `try_restore`. Documented that cfmakeraw clears `IXON`/`ISIG`.
+  - `nnano-tui/src/term/caps.rs`: `Caps { term, tmux, screen, colours }`; detection is a private `from_env(closure)` so it is testable without mutating the process env (edition 2024 makes `set_var` unsafe).
+  - `nnano-tui/src/ui/mod.rs`: body left blank, one-row reversed status bar (identity + `^B`/`^A` multiplexer notice left, file name right); `draw` does not decide *when*.
+  - `nnano-tui/src/lib.rs`: `App` + `poll(16ms)` loop, redraw only on `dirty`, `^Q` (Ctrl+Q) quits, resize sets `dirty`; `run(Option<String>)` entry point. Non-tty stdout is refused with "standard output is not a terminal" instead of surfacing `ENXIO` from raw-mode setup.
+  - `nnano/src/main.rs`: stub removed; parses `[FILE]` and calls `nnano_tui::run`, mapping errors to stderr + exit 1.
+- Verified: `fmt --check`, `clippy --workspace --all-targets -D warnings`, `test --workspace` (10 tests: 3 CLI, 3 caps, 2 quit-key, 2 `TestBackend` status bar) all green. Pty smoke test (python `pty.fork`, 80x24): alt screen in/out, cursor hidden/restored, `^Q` exit 0, status bar shows `nnano` + file; `^S`/`^C`/`^Z` sent as keys do not stop or kill the process, and `^Q` still exits 0.
+- `git init -b main` + first commit `bfce019` (all files, `Cargo.lock` included, `/target` ignored).
+- `AGENTS.md`: *Status* rewritten for phase 1; *Verification* now requires a pty run for any `term/` change (harness not committed).
