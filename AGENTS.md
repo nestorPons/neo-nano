@@ -3,10 +3,10 @@
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
 ## Status (2026-11-05)
-- **Phase 1 done** (2026-11-05): workspace + three crates, `term/` (raw mode, alternate screen, restore guard, panic hook, `Caps`), `ui/` (blank body + reversed status bar), event loop `poll(16ms)` with `^Q` quit. Git repo initialized on `main` (one commit).
-- `nnano` currently shows a blank screen with a status bar (`nnano <version>` left, file name right); no text yet — that is phase 2.
-- `nnano-core` is still doc-only stubs (`buffer/`, `editor/`, `config/`, `search.rs`, `syntax.rs`); the option registry does not exist yet.
-- Verified in a real pty, not only in `TestBackend`: alternate screen entered/left, cursor restored, `^Q` exits 0, and `^S`/`^C`/`^Z` arrive as keys (no XOFF, no SIGINT/SIGTSTP).
+- **Phase 2 done** (2026-11-05): `nnano-core::buffer` (`TextBuffer` on `ropey`, `Cursor`, `Width`) + text render with tabs/CJK/CRLF, cursor placement and vertical/horizontal scroll. `nnano <file>` shows the file read-only; no editing keys yet.
+- Phase 1 shell stays as built: `term/` raw mode + alternate screen + restore guard + panic hook + `Caps`; event loop `poll(16ms)`, `^Q` quits.
+- `nnano-core` stubs still empty: `editor/`, `config/`, `search.rs`, `syntax.rs`. No option registry, no editing, no save, no undo.
+- Verified in a real pty with content: tabs expand to the next stop, CJK and accents render, CRLF keeps out of the screen, status bar shows `line:column`; a 5 MB single line starts in ~10 ms.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -254,7 +254,9 @@ poll(16ms) -> drain events -> apply Action -> if dirty: draw -> diff
 
 "The Text model: rope" section above is normative; this only adds the rendering side.
 
-- Cursor as `(line, byte offset)` resolved through the rope's cached newline index; visual column derived via `unicode-width`.
+- Cursor as `(line, char offset)` resolved through the rope's cached newline index; visual column derived via `unicode-width`. *Clarified 2026-11-05*: the offset is stored in chars, not bytes — ropey indexes lines by char, and a stored byte offset would need snapping back to a char boundary on every line change (O(line) on a 5 MB single line). `TextBuffer::char_to_byte` converts at the save/render edges. The invariant that matters is unchanged: **no visual column is ever stored**.
+- Line breaks are ropey's Unicode set (`\n`, `\r`, `\r\n`, VT, FF, NEL, LS, PS), so a lone `\r` splits lines like `\n` does. `line_len`/`line_text` strip the terminator; **save must re-emit each line's own terminator**, never assume `\n` (phase 4).
+- Display width is accumulated by one `buffer::Width` used by both the cursor and the renderer, so a cursor cannot drift from the glyphs under it: tab stops (8 until the registry exists), `unicode-width` per char, zero cells for ZWJ/VS16/skin-tone continuations and combining marks.
 - Undo as an operation log of byte ranges (not text snapshots) to bound memory.
 - The viewport reads ranges from the rope; never keep a parallel `Vec<Line>` mirror.
 - Required tests: CJK/emoji widths, tabs, `\r\n`, CRLF save preservation, 5 MB single line, 1M-line file.
