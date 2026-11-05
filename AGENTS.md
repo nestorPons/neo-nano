@@ -3,10 +3,10 @@
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
 ## Status (2026-11-05)
-- **Phase 2 done** (2026-11-05): `nnano-core::buffer` (`TextBuffer` on `ropey`, `Cursor`, `Width`) + text render with tabs/CJK/CRLF, cursor placement and vertical/horizontal scroll. `nnano <file>` shows the file read-only; no editing keys yet.
-- Phase 1 shell stays as built: `term/` raw mode + alternate screen + restore guard + panic hook + `Caps`; event loop `poll(16ms)`, `^Q` quits.
-- `nnano-core` stubs still empty: `editor/`, `config/`, `search.rs`, `syntax.rs`. No option registry, no editing, no save, no undo.
-- Verified in a real pty with content: tabs expand to the next stop, CJK and accents render, CRLF keeps out of the screen, status bar shows `line:column`; a 5 MB single line starts in ~10 ms.
+- **Phase 3 done** (2026-11-05): `nnano-core::editor` (`Action` + `Editor` with typing, backspace/delete, joins, movement and a visual goal column) and `term/input.rs` decoding keys into that `Action`. `nnano <file>` is now an editable buffer with a `[Modified]` marker; nothing is written to disk yet.
+- Deferred keys decode to `None` on purpose (`^S`, `^O`, `^K`, `^U`, `^Z`, `^F`, `^P`, `Esc`, …) and a test pins that list; each gains its action with its phase.
+- `nnano-core` stubs still empty: `config/`, `search.rs`, `syntax.rs`; no option registry, no save, no undo.
+- Verified in a real pty: typing, tab, Enter, CJK input, arrows, `Home`, `Backspace` and `^Q` all behave; `[Modified]` appears only on narrow-safe layout rules.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -123,6 +123,8 @@ Added with the keymap: `M-S` save as, `M-,` settings menu, `F3`/`Shift+F3` find 
 Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` / `M-R` / `M-B` toggle case / regexp / backwards, while outside a prompt `M-R` opens Replace. Same key, different mode — not a collision.
 
 User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
+
+Implemented rows (2026-11-05): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 4–7).
 
 Terminal constraints that gate the table (verify at startup, never assume):
 - Disable flow control and `ISIG` so `^S`, `^Q`, `^C`, `^Z` reach the app as keys, not XOFF/SIGINT/SIGTSTP.

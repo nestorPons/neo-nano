@@ -2,6 +2,8 @@
 
 use ropey::{Rope, RopeSlice};
 
+use std::ops::Range;
+
 /// Text of one buffer.
 ///
 /// Lines are zero-indexed and a trailing newline opens an empty final line, as
@@ -67,6 +69,27 @@ impl TextBuffer {
     /// The raw line, terminator included. Clamped to the last line.
     pub fn line_slice(&self, line: usize) -> RopeSlice<'_> {
         self.rope.line(line.min(self.line_count() - 1))
+    }
+
+    /// Chars of `line` without its terminator, as an iterator.
+    pub fn line_chars(&self, line: usize) -> impl Iterator<Item = char> + '_ {
+        let len = self.line_len(line);
+        self.line_slice(line).chars().take(len)
+    }
+
+    /// Insert `text` at a char index; O(log n) wherever it lands.
+    pub fn insert_str(&mut self, char_idx: usize, text: &str) {
+        let idx = char_idx.min(self.len_chars());
+        self.rope.insert(idx, text);
+    }
+
+    /// Remove `range` of chars; an empty or inverted range does nothing.
+    pub fn remove(&mut self, range: Range<usize>) {
+        let start = range.start.min(self.len_chars());
+        let end = range.end.min(self.len_chars()).max(start);
+        if start < end {
+            self.rope.remove(start..end);
+        }
     }
 
     /// The line as a string, terminator excluded. Meant for status, tests and

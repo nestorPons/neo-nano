@@ -7,8 +7,9 @@
 pub mod text;
 pub mod viewport;
 
+use nnano_core::buffer::line_visual_column;
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
 
@@ -29,7 +30,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let viewport = app.viewport();
-    let buffer = app.buffer();
+    let buffer = app.editor().buffer();
     let tab_width = app.tab_width();
 
     for row in 0..area.height {
@@ -47,7 +48,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    let cursor = app.cursor();
+    let cursor = app.editor().cursor();
     let row = cursor.line().saturating_sub(viewport.top_line);
     let col = cursor
         .visual_column(buffer, tab_width)
@@ -63,29 +64,45 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
 /// Status bar: identity on the left, position and file name on the right.
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let style = Style::default().add_modifier(Modifier::REVERSED);
+    frame.render_widget(
+        Paragraph::new(status_text(app, area.width)).style(style),
+        area,
+    );
+}
+
+/// One exactly-wide line: identity on the left, `line:column  file` on the right.
+///
+/// The right side (position, then file name) wins the space budget, so a narrow
+/// terminal clips `[Modified]` and the title rather than the cursor position.
+/// Width is measured cell-wise, not by `chars().count()`, so CJK file names do
+/// not overlap the title.
+fn status_text(app: &App, width: u16) -> String {
+    let width = usize::from(width);
     let left = app.status_left();
     let right = app.status_right();
-    let right_width = u16::try_from(right.chars().count())
-        .unwrap_or(u16::MAX)
-        .saturating_add(1)
-        .min(area.width);
-    let [left_area, right_area] =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(right_width)]).areas(area);
+    let left_width = line_visual_column(left.chars(), 1);
+    let right_width = line_visual_column(right.chars(), 1);
 
-    frame.render_widget(Paragraph::new(left).style(style), left_area);
-    frame.render_widget(
-        Paragraph::new(right)
-            .style(style)
-            .alignment(Alignment::Right),
-        right_area,
-    );
+    if right_width >= width {
+        return right.chars().take(width).collect();
+    }
+    if left_width + right_width < width {
+        let padding = width - left_width - right_width;
+        return format!("{left}{}{right}", " ".repeat(padding));
+    }
+    let keep = width - right_width;
+    let clipped: String = left.chars().take(keep).collect();
+    format!("{clipped}{right}")
 }
 
 /// Scroll so the cursor is visible in a body of this size. Called by the app
 /// loop before every draw, using the same arithmetic as the layout above.
 pub fn ensure_cursor_visible(app: &mut App, width: u16, height: u16) {
-    let col = app.cursor().visual_column(app.buffer(), app.tab_width());
-    let line = app.cursor().line();
+    let col = app
+        .editor()
+        .cursor()
+        .visual_column(app.editor().buffer(), app.tab_width());
+    let line = app.editor().cursor().line();
     app.viewport_mut().ensure_visible(line, col, width, height);
 }
 
@@ -94,7 +111,9 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use super::{draw, ensure_cursor_visible};
+    use nnano_core::editor::Action;
+
+    use super::{draw, ensure_cursor_visible, status_text};
     use crate::App;
 
     const WIDTH: u16 = 24;
@@ -158,6 +177,21 @@ mod tests {
 
         let terminal = render(&app);
         assert_eq!(row(&terminal, HEIGHT - 2), "line 79");
+    }
+
+    #[test]
+    fn status_shows_the_modified_marker_and_keeps_the_position_when_narrow() {
+        let mut app = App::from_text("notes.txt", "");
+        app.apply(Action::Insert('x'));
+
+        let wide = status_text(&app, 80);
+        assert!(wide.contains("[Modified]"), "{wide:?}");
+        assert_eq!(wide.chars().count(), 80);
+
+        let narrow = status_text(&app, 20);
+        assert_eq!(narrow.chars().count(), 20);
+        assert!(narrow.contains("1:2"), "{narrow:?}");
+        assert_eq!(status_text(&app, 0), "");
     }
 
     #[test]

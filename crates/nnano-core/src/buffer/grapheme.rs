@@ -71,9 +71,32 @@ pub fn line_visual_column(chars: impl IntoIterator<Item = char>, tab_width: usiz
     width.column()
 }
 
+/// Char offset whose cell covers `target`, or the end of the iterator. Used when
+/// moving vertically: the cursor lands on the glyph drawn at the goal column,
+/// never between the two cells of a wide one.
+pub fn char_offset_for_column(
+    chars: impl IntoIterator<Item = char>,
+    target: usize,
+    tab_width: usize,
+) -> usize {
+    let mut width = Width::new(0, tab_width);
+    let mut offset = 0;
+    for ch in chars {
+        let before = width.column();
+        let after = before + width.push(ch);
+        if target < after {
+            return offset;
+        }
+        offset += 1;
+    }
+    offset
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_TAB_WIDTH, Width, line_visual_column, next_tab_stop};
+    use super::{
+        DEFAULT_TAB_WIDTH, Width, char_offset_for_column, line_visual_column, next_tab_stop,
+    };
 
     #[test]
     fn tabs_snap_to_the_next_stop() {
@@ -124,5 +147,19 @@ mod tests {
         assert_eq!(width.column(), 4);
         assert_eq!(width.push('漢'), 2);
         assert_eq!(width.column(), 6);
+    }
+
+    #[test]
+    fn offset_for_column_lands_on_the_glyph_covering_it() {
+        // "a\tb": columns 1..8 belong to the tab, 8 to 'b'.
+        assert_eq!(char_offset_for_column("a\tb".chars(), 0, 8), 0);
+        assert_eq!(char_offset_for_column("a\tb".chars(), 1, 8), 1);
+        assert_eq!(char_offset_for_column("a\tb".chars(), 7, 8), 1);
+        assert_eq!(char_offset_for_column("a\tb".chars(), 8, 8), 2);
+        // Past the end: end of line.
+        assert_eq!(char_offset_for_column("a\tb".chars(), 99, 8), 3);
+        // A wide glyph owns both of its cells.
+        assert_eq!(char_offset_for_column("漢x".chars(), 1, 8), 0);
+        assert_eq!(char_offset_for_column("漢x".chars(), 2, 8), 1);
     }
 }

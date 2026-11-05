@@ -4,8 +4,8 @@
 //! panic hook, capability detection, input decoding, drawing and overlays. All
 //! editor semantics stay in `nnano-core`.
 //!
-//! Event loop (phase 2): `poll(16ms)` -> drain events -> redraw only when dirty.
-//! No fixed tick, no async runtime, no worker thread yet.
+//! Event loop (phase 3): `poll(16ms)` -> decode one key into an `Action` -> apply
+//! -> redraw only when dirty. No fixed tick, no async runtime, no worker thread.
 
 pub mod term;
 pub mod ui;
@@ -14,8 +14,9 @@ use std::io;
 use std::io::IsTerminal;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use nnano_core::buffer::{Cursor, DEFAULT_TAB_WIDTH, TextBuffer};
+use crossterm::event::{self, Event};
+use nnano_core::buffer::DEFAULT_TAB_WIDTH;
+use nnano_core::editor::{Action, Editor};
 
 use crate::term::Caps;
 use crate::ui::viewport::Viewport;
@@ -30,10 +31,11 @@ pub struct App {
     /// Buffer name as shown in the status bar.
     pub(crate) file: String,
     pub(crate) caps: Caps,
-    buffer: TextBuffer,
-    cursor: Cursor,
+    editor: Editor,
     viewport: Viewport,
-    dirty: bool,
+    body_height: u16,
+    redraw: bool,
+    quit: bool,
 }
 
 impl App {
@@ -51,10 +53,11 @@ impl App {
                 file.to_string()
             },
             caps: Caps::detect(),
-            buffer: TextBuffer::from_text(text),
-            cursor: Cursor::new(0, 0),
+            editor: Editor::from_text(text),
             viewport: Viewport::default(),
-            dirty: true,
+            body_height: 0,
+            redraw: true,
+            quit: false,
         }
     }
 
@@ -90,32 +93,45 @@ impl App {
             ));
         }
         let mut session = term::Session::start()?;
-        loop {
-            if self.dirty {
-                self.cursor.clamp(&self.buffer);
+        while !self.quit {
+            if self.redraw {
                 let size = session.terminal().size()?;
-                ui::ensure_cursor_visible(&mut self, size.width, size.height.saturating_sub(1));
+                let body_height = size.height.saturating_sub(1);
+                self.body_height = body_height;
+                ui::ensure_cursor_visible(&mut self, size.width, body_height);
                 session.terminal().draw(|frame| ui::draw(frame, &self))?;
-                self.dirty = false;
+                self.redraw = false;
             }
             if !event::poll(POLL_INTERVAL)? {
                 continue;
             }
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press && is_quit(&key) => break,
-                Event::Resize(_, _) => self.dirty = true,
+                Event::Key(key) => {
+                    if let Some(action) = term::input::decode(&key) {
+                        self.apply(action);
+                    }
+                }
+                Event::Resize(_, _) => self.redraw = true,
                 _ => {}
             }
         }
         Ok(())
     }
 
-    pub(crate) fn buffer(&self) -> &TextBuffer {
-        &self.buffer
+    /// Single mutation path: keyboard (and later mouse and palette) all land here.
+    fn apply(&mut self, action: Action) {
+        match action {
+            Action::Quit => self.quit = true,
+            // Pages are the only actions that need viewport geometry.
+            Action::PageUp => self.editor.move_vertical(-page_step(self.body_height)),
+            Action::PageDown => self.editor.move_vertical(page_step(self.body_height)),
+            other => self.editor.apply(other),
+        }
+        self.redraw = true;
     }
 
-    pub(crate) fn cursor(&self) -> &Cursor {
-        &self.cursor
+    pub(crate) fn editor(&self) -> &Editor {
+        &self.editor
     }
 
     pub(crate) fn viewport(&self) -> &Viewport {
@@ -131,18 +147,20 @@ impl App {
         DEFAULT_TAB_WIDTH
     }
 
-    /// Test seam for scroll/cursor rendering: move the cursor and mark the frame
-    /// dirty. Phase 3 replaces it with `Action`-driven movement.
+    /// Test seam: move the cursor and mark the frame dirty.
     #[cfg(test)]
     pub(crate) fn set_cursor(&mut self, line: usize, col: usize) {
-        self.cursor = Cursor::new(line, col);
-        self.dirty = true;
+        self.editor.set_cursor(line, col);
+        self.redraw = true;
     }
 
-    /// Left of the status bar: identity, plus the multiplexer notice. `^B`/`^A`
-    /// are documented, never rebound: the multiplexer keeps its prefix.
+    /// Left of the status bar: identity, dirty marker and the multiplexer notice.
+    /// `^B`/`^A` are documented, never rebound: the multiplexer keeps its prefix.
     fn status_left(&self) -> String {
         let mut text = format!(" nnano {}", env!("CARGO_PKG_VERSION"));
+        if self.editor.is_dirty() {
+            text.push_str("  [Modified]");
+        }
         if self.caps.tmux {
             text.push_str("   ^B: tmux prefix");
         } else if self.caps.screen {
@@ -154,7 +172,10 @@ impl App {
     /// Right of the status bar: `line:column  file`, one-based and visual, as
     /// nano prints it.
     fn status_right(&self) -> String {
-        let (line, col) = self.cursor.display_position(&self.buffer, self.tab_width());
+        let (line, col) = self
+            .editor
+            .cursor()
+            .display_position(self.editor.buffer(), self.tab_width());
         format!("{line}:{col}  {} ", self.file)
     }
 }
@@ -165,10 +186,9 @@ impl Default for App {
     }
 }
 
-/// `^Q` quits and nothing else does: `^C`/`^Z` are actions, `Esc` belongs to
-/// overlays and prompts.
-fn is_quit(key: &KeyEvent) -> bool {
-    key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)
+/// One page is the visible area minus the row the cursor already sits on.
+fn page_step(body_height: u16) -> isize {
+    isize::try_from(body_height.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
 }
 
 /// Entry point used by the `nnano` binary.
@@ -178,24 +198,42 @@ pub fn run(file: Option<String>) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use nnano_core::editor::Action;
 
-    use super::{App, is_quit};
+    use super::{App, page_step};
 
-    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, modifiers)
+    #[test]
+    fn page_step_leaves_the_cursor_row_visible() {
+        assert_eq!(page_step(24), 23);
+        assert_eq!(page_step(1), 1);
+        assert_eq!(page_step(0), 1);
     }
 
     #[test]
-    fn control_q_quits() {
-        assert!(is_quit(&key(KeyCode::Char('q'), KeyModifiers::CONTROL)));
+    fn typing_through_actions_marks_the_buffer_dirty() {
+        let mut app = App::from_text("x.txt", "");
+        app.apply(Action::Insert('a'));
+        app.apply(Action::Insert('b'));
+        assert!(app.editor().is_dirty());
+        assert_eq!(app.editor().buffer().line_text(0), "ab");
     }
 
     #[test]
-    fn plain_q_and_other_keys_do_not_quit() {
-        assert!(!is_quit(&key(KeyCode::Char('q'), KeyModifiers::NONE)));
-        assert!(!is_quit(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
-        assert!(!is_quit(&key(KeyCode::Esc, KeyModifiers::NONE)));
+    fn quit_action_ends_the_loop() {
+        let mut app = App::from_text("x.txt", "");
+        app.apply(Action::Quit);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn pages_move_by_the_body_height() {
+        let text = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        app.body_height = 10;
+        app.apply(Action::PageDown);
+        assert_eq!(app.editor().cursor().line(), 9);
+        app.apply(Action::PageUp);
+        assert_eq!(app.editor().cursor().line(), 0);
     }
 
     #[test]
@@ -203,7 +241,7 @@ mod tests {
         let path = std::env::temp_dir().join("nnano-does-not-exist.txt");
         let _ = std::fs::remove_file(&path);
         let app = App::open(Some(path.display().to_string())).unwrap();
-        assert!(app.buffer().is_empty());
+        assert!(app.editor().buffer().is_empty());
         assert!(app.file.ends_with("nnano-does-not-exist.txt"));
     }
 
@@ -212,8 +250,8 @@ mod tests {
         let path = std::env::temp_dir().join("nnano-phase2-open.txt");
         std::fs::write(&path, "uno\ndos\n").unwrap();
         let app = App::open(Some(path.display().to_string())).unwrap();
-        assert_eq!(app.buffer().line_count(), 3);
-        assert_eq!(app.buffer().line_text(1), "dos");
+        assert_eq!(app.editor().buffer().line_count(), 3);
+        assert_eq!(app.editor().buffer().line_text(1), "dos");
         let _ = std::fs::remove_file(&path);
     }
 

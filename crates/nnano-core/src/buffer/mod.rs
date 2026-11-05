@@ -15,5 +15,7 @@ mod grapheme;
 mod rope;
 
 pub use cursor::Cursor;
-pub use grapheme::{DEFAULT_TAB_WIDTH, Width, line_visual_column, next_tab_stop};
+pub use grapheme::{
+    DEFAULT_TAB_WIDTH, Width, char_offset_for_column, line_visual_column, next_tab_stop,
+};
 pub use rope::TextBuffer;

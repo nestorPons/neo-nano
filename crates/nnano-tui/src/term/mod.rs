@@ -6,6 +6,7 @@
 //! `Action::Backspace`.
 
 mod caps;
+pub mod input;
 
 pub use caps::Caps;
 
