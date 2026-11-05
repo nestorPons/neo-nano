@@ -6,7 +6,7 @@ Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simp
 - **Phase 3 done** (2026-11-05): `nnano-core::editor` (`Action` + `Editor` with typing, backspace/delete, joins, movement and a visual goal column) and `term/input.rs` decoding keys into that `Action`. `nnano <file>` is now an editable buffer with a `[Modified]` marker; nothing is written to disk yet.
 - Deferred keys decode to `None` on purpose (`^S`, `^O`, `^K`, `^U`, `^Z`, `^F`, `^P`, `Esc`, …) and a test pins that list; each gains its action with its phase.
 - `nnano-core` stubs still empty: `config/`, `search.rs`, `syntax.rs`; no option registry, no save, no undo.
-- Verified in a real pty: typing, tab, Enter, CJK input, arrows, `Home`, `Backspace` and `^Q` all behave; `[Modified]` appears only on narrow-safe layout rules.
+- Verified in a real pty: typing, tab, Enter, CJK input, arrows, `Home`, `Backspace` and `^Q` all behave; `[Modified]` appears as soon as the buffer changes, and a narrow terminal clips the title instead of the cursor position.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
