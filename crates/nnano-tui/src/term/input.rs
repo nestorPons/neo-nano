@@ -25,6 +25,7 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
     {
         return match raw.to_ascii_lowercase() {
             'q' => Some(Action::Quit),
+            's' => Some(Action::Save),
             'h' => Some(Action::Backspace),
             'e' => Some(Action::MoveLineEnd),
             'b' => Some(Action::MoveLeft),
@@ -74,6 +75,7 @@ mod tests {
     fn implemented_keymap_rows_decode() {
         let table: &[(KeyEvent, Action)] = &[
             (key(KeyCode::Char('q'), KeyModifiers::CONTROL), Action::Quit),
+            (key(KeyCode::Char('s'), KeyModifiers::CONTROL), Action::Save),
             (
                 key(KeyCode::Char('l'), KeyModifiers::CONTROL),
                 Action::Redraw,
@@ -135,7 +137,6 @@ mod tests {
         // Each of these gains an action in its own phase; until then the key is
         // inert rather than a silent no-op variant.
         for (code, modifiers) in [
-            (KeyCode::Char('s'), KeyModifiers::CONTROL), // save, phase 4
             (KeyCode::Char('o'), KeyModifiers::CONTROL), // open, phase 4
             (KeyCode::Char('k'), KeyModifiers::CONTROL), // cut line, phase 7
             (KeyCode::Char('u'), KeyModifiers::CONTROL), // paste line, phase 7

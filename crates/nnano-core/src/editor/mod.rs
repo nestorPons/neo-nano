@@ -15,6 +15,8 @@ use crate::buffer::{Cursor, DEFAULT_TAB_WIDTH, TextBuffer, char_offset_for_colum
 pub enum Action {
     /// `^Q`. Confirmation belongs to the app loop.
     Quit,
+    /// `^S`. The app loop owns the file: it has the path and the encoding.
+    Save,
     /// `^L` or a resize: force a repaint, change nothing.
     Redraw,
     Insert(char),
@@ -87,8 +89,9 @@ impl Editor {
     /// Apply one action. Returns nothing: the caller repaints unconditionally.
     pub fn apply(&mut self, action: Action) {
         match action {
-            // `Quit` is decided by the app loop; pages need a height.
-            Action::Quit | Action::Redraw | Action::PageUp | Action::PageDown => {}
+            // `Quit`/`Save` are owned by the app loop (it has the path and the
+            // file), and pages need a viewport height.
+            Action::Quit | Action::Save | Action::Redraw | Action::PageUp | Action::PageDown => {}
             Action::Insert(ch) => {
                 let mut utf8 = [0; 4];
                 let text = ch.encode_utf8(&mut utf8);

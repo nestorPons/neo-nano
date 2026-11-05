@@ -77,6 +77,11 @@ impl TextBuffer {
         self.line_slice(line).chars().take(len)
     }
 
+    /// Raw chunks, for streaming the buffer out on save without a full copy.
+    pub fn chunks(&self) -> impl Iterator<Item = &str> {
+        self.rope.chunks()
+    }
+
     /// Insert `text` at a char index; O(log n) wherever it lands.
     pub fn insert_str(&mut self, char_idx: usize, text: &str) {
         let idx = char_idx.min(self.len_chars());

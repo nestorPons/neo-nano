@@ -4,18 +4,20 @@
 //! panic hook, capability detection, input decoding, drawing and overlays. All
 //! editor semantics stay in `nnano-core`.
 //!
-//! Event loop (phase 3): `poll(16ms)` -> decode one key into an `Action` -> apply
+//! Event loop (phase 4): `poll(16ms)` -> decode one key into an `Action` -> apply
 //! -> redraw only when dirty. No fixed tick, no async runtime, no worker thread.
 
 pub mod term;
 pub mod ui;
 
+use std::fs::OpenOptions;
 use std::io;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{self, Event};
-use nnano_core::buffer::DEFAULT_TAB_WIDTH;
+use nnano_core::buffer::{DEFAULT_TAB_WIDTH, EncodeError, Encoding, TextBuffer, encoding};
 use nnano_core::editor::{Action, Editor};
 
 use crate::term::Caps;
@@ -36,6 +38,14 @@ pub struct App {
     body_height: u16,
     redraw: bool,
     quit: bool,
+    /// Where `^S` writes. `None` for an unnamed buffer and for stdin, which is not
+    /// seekable and therefore cannot be saved in place.
+    path: Option<PathBuf>,
+    encoding: Encoding,
+    /// One status-bar line, cleared by the next action.
+    message: Option<String>,
+    /// `^Q` was pressed once on a dirty buffer and is waiting for a second press.
+    confirm_quit: bool,
 }
 
 impl App {
@@ -44,7 +54,7 @@ impl App {
         Self::from_text("", "")
     }
 
-    /// A buffer with known text, used by tests and by [`App::open`].
+    /// A buffer with known text and no path, used by tests and by `from_bytes`.
     pub fn from_text(file: &str, text: &str) -> Self {
         Self {
             file: if file.is_empty() {
@@ -58,26 +68,50 @@ impl App {
             body_height: 0,
             redraw: true,
             quit: false,
+            path: None,
+            encoding: Encoding::Utf8,
+            message: None,
+            confirm_quit: false,
         }
     }
 
-    /// Read `path` into a buffer. A missing file opens an empty buffer with that
-    /// name, as nano does; anything else is an error.
-    pub fn open(path: Option<String>) -> io::Result<Self> {
-        let Some(path) = path else {
-            return Ok(Self::new());
-        };
-        match std::fs::read(&path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(text) => Ok(Self::from_text(&path, &text)),
-                Err(_) => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("{path}: not valid UTF-8 (encoding detection arrives in phase 4)"),
-                )),
-            },
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::from_text(&path, "")),
-            Err(err) => Err(err),
+    /// Open `target`: a file path, `-` for stdin, or nothing for an empty buffer.
+    /// A missing file opens an empty buffer with that name and is created by `^S`.
+    pub fn open(target: Option<String>) -> io::Result<Self> {
+        match target.as_deref() {
+            None => Ok(Self::new()),
+            Some("-") => {
+                let mut bytes = Vec::new();
+                io::stdin().read_to_end(&mut bytes)?;
+                Self::from_bytes("[stdin]", None, &bytes)
+            }
+            Some(name) => {
+                let path = PathBuf::from(name);
+                match std::fs::read(&path) {
+                    Ok(bytes) => Self::from_bytes(name, Some(path), &bytes),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                        let mut app = Self::from_text(name, "");
+                        app.path = Some(path);
+                        Ok(app)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
         }
+    }
+
+    /// Decode already-read bytes. Detection only: Latin-1 loads with a warning,
+    /// UTF-16 is refused.
+    fn from_bytes(name: &str, path: Option<PathBuf>, bytes: &[u8]) -> io::Result<Self> {
+        let loaded = encoding::decode(bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        let mut app = Self::from_text(name, &loaded.text);
+        app.path = path;
+        app.encoding = loaded.encoding;
+        if loaded.encoding == Encoding::Latin1 {
+            app.inform("read as Latin-1 (not UTF-8); saving keeps the same bytes");
+        }
+        Ok(app)
     }
 
     /// Run until the user quits. The `Session` guard restores the terminal on
@@ -120,14 +154,45 @@ impl App {
 
     /// Single mutation path: keyboard (and later mouse and palette) all land here.
     fn apply(&mut self, action: Action) {
+        let confirming = self.confirm_quit;
+        self.confirm_quit = false;
+        self.message = None;
+
         match action {
-            Action::Quit => self.quit = true,
+            Action::Quit => {
+                if self.editor.is_dirty() && !confirming {
+                    self.confirm_quit = true;
+                    self.inform("unsaved changes: ^Q again to quit, ^S to save");
+                } else {
+                    self.quit = true;
+                }
+            }
+            Action::Save => self.save(),
             // Pages are the only actions that need viewport geometry.
             Action::PageUp => self.editor.move_vertical(-page_step(self.body_height)),
             Action::PageDown => self.editor.move_vertical(page_step(self.body_height)),
             other => self.editor.apply(other),
         }
         self.redraw = true;
+    }
+
+    /// `^S`. Writes in place when there is a path; nothing is written otherwise.
+    fn save(&mut self) {
+        let Some(path) = self.path.clone() else {
+            self.inform("no filename yet: save-as needs the prompt (phase 5)");
+            return;
+        };
+        match save_in_place(&path, self.editor.buffer(), self.encoding) {
+            Ok(()) => {
+                self.editor.mark_saved();
+                self.inform(format!("saved {}", path.display()));
+            }
+            Err(err) => self.inform(format!("save failed: {err}")),
+        }
+    }
+
+    fn inform(&mut self, message: impl Into<String>) {
+        self.message = Some(message.into());
     }
 
     pub(crate) fn editor(&self) -> &Editor {
@@ -154,9 +219,13 @@ impl App {
         self.redraw = true;
     }
 
-    /// Left of the status bar: identity, dirty marker and the multiplexer notice.
-    /// `^B`/`^A` are documented, never rebound: the multiplexer keeps its prefix.
+    /// Left of the status bar: a message if there is one, otherwise identity,
+    /// dirty marker and the multiplexer notice. `^B`/`^A` are documented, never
+    /// rebound: the multiplexer keeps its prefix.
     fn status_left(&self) -> String {
+        if let Some(message) = &self.message {
+            return format!(" {message}");
+        }
         let mut text = format!(" nnano {}", env!("CARGO_PKG_VERSION"));
         if self.editor.is_dirty() {
             text.push_str("  [Modified]");
@@ -186,6 +255,27 @@ impl Default for App {
     }
 }
 
+/// Write the buffer over the file the user opened.
+///
+/// In place on purpose: truncate the real path, write, flush. No temp file, no
+/// `rename`, **no `file~`**. Hardlinks and symlinks survive, and a crash or a full
+/// disk mid-write leaves a truncated file — the recovery file is the only net.
+fn save_in_place(path: &Path, buffer: &TextBuffer, encoding: Encoding) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    match encoding::write_encoded(&mut file, buffer.chunks(), encoding) {
+        Ok(()) => {}
+        Err(EncodeError::Io(err)) => return Err(err),
+        Err(err @ EncodeError::NotRepresentable(_)) => {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+        }
+    }
+    file.flush()
+}
+
 /// One page is the visible area minus the row the cursor already sits on.
 fn page_step(body_height: u16) -> isize {
     isize::try_from(body_height.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
@@ -198,9 +288,28 @@ pub fn run(file: Option<String>) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
+    use nnano_core::buffer::Encoding;
     use nnano_core::editor::Action;
 
     use super::{App, page_step};
+
+    /// Unique path under the system temp dir, removed by the test.
+    fn temp(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("nnano-{name}-{}", std::process::id()))
+    }
+
+    fn open_file(path: &Path) -> App {
+        App::open(Some(path.display().to_string())).unwrap()
+    }
+
+    fn text(app: &App) -> String {
+        (0..app.editor().buffer().line_count())
+            .map(|line| app.editor().buffer().line_text(line))
+            .collect::<Vec<_>>()
+            .join("\\n")
+    }
 
     #[test]
     fn page_step_leaves_the_cursor_row_visible() {
@@ -226,6 +335,30 @@ mod tests {
     }
 
     #[test]
+    fn quit_with_unsaved_changes_asks_once_and_then_quits() {
+        let mut app = App::from_text("x.txt", "");
+        app.apply(Action::Insert('x'));
+        app.apply(Action::Quit);
+        assert!(!app.quit);
+        assert!(app.confirm_quit);
+        assert!(app.message.as_deref().unwrap().contains("^Q again"));
+
+        app.apply(Action::Quit);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn any_other_key_cancels_the_pending_quit() {
+        let mut app = App::from_text("x.txt", "");
+        app.apply(Action::Insert('x'));
+        app.apply(Action::Quit);
+        app.apply(Action::MoveLeft);
+        assert!(!app.confirm_quit);
+        app.apply(Action::Quit);
+        assert!(!app.quit);
+    }
+
+    #[test]
     fn pages_move_by_the_body_height() {
         let text = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
         let mut app = App::from_text("long.txt", &text);
@@ -238,30 +371,100 @@ mod tests {
 
     #[test]
     fn missing_file_opens_an_empty_buffer_with_that_name() {
-        let path = std::env::temp_dir().join("nnano-does-not-exist.txt");
+        let path = temp("missing.txt");
         let _ = std::fs::remove_file(&path);
-        let app = App::open(Some(path.display().to_string())).unwrap();
+        let app = open_file(&path);
         assert!(app.editor().buffer().is_empty());
-        assert!(app.file.ends_with("nnano-does-not-exist.txt"));
+        assert!(app.file.contains("missing"));
     }
 
     #[test]
     fn a_file_is_read_in_one_pass() {
-        let path = std::env::temp_dir().join("nnano-phase2-open.txt");
+        let path = temp("open.txt");
         std::fs::write(&path, "uno\ndos\n").unwrap();
-        let app = App::open(Some(path.display().to_string())).unwrap();
+        let app = open_file(&path);
         assert_eq!(app.editor().buffer().line_count(), 3);
         assert_eq!(app.editor().buffer().line_text(1), "dos");
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn invalid_utf8_is_refused_for_now() {
-        let path = std::env::temp_dir().join("nnano-phase2-latin1.txt");
-        std::fs::write(&path, b"caf\xe9\n").unwrap();
+    fn latin1_is_detected_with_a_warning_instead_of_failing() {
+        let path = temp("latin1.txt");
+        std::fs::write(&path, b"caf\xE9\r\n").unwrap();
+        let app = open_file(&path);
+        assert_eq!(app.encoding, Encoding::Latin1);
+        assert_eq!(text(&app), "café\\n");
+        assert!(app.message.as_deref().unwrap().contains("Latin-1"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn utf16_is_refused() {
+        let path = temp("utf16.txt");
+        std::fs::write(&path, [0xFF, 0xFE, b'h', 0]).unwrap();
         let err = App::open(Some(path.display().to_string())).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("UTF-16"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_writes_in_place_and_keeps_crlf_and_bytes() {
+        let path = temp("save.txt");
+        let original = b"uno\r\ndos\r\n";
+        std::fs::write(&path, original).unwrap();
+        let mut app = open_file(&path);
+
+        app.apply(Action::Save);
+        assert!(app.message.as_deref().unwrap().starts_with("saved"));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            original,
+            "untouched save must not rewrite bytes"
+        );
+
+        // Edit the first line and save: CRLF of the other line must survive.
+        app.set_cursor(0, 3);
+        app.apply(Action::Insert('!'));
+        assert!(app.editor().is_dirty());
+        app.apply(Action::Save);
+        assert!(!app.editor().is_dirty());
+        assert_eq!(std::fs::read(&path).unwrap(), b"uno!\r\ndos\r\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_a_missing_file_creates_it() {
+        let path = temp("created.txt");
+        let _ = std::fs::remove_file(&path);
+        let mut app = App::open(Some(path.display().to_string())).unwrap();
+        app.apply(Action::Insert('h'));
+        app.apply(Action::Insert('i'));
+        app.apply(Action::Save);
+        assert_eq!(std::fs::read(&path).unwrap(), b"hi");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn latin1_save_refuses_a_char_it_cannot_hold() {
+        let path = temp("latin1-save.txt");
+        std::fs::write(&path, b"caf\xE9\n").unwrap();
+        let mut app = open_file(&path);
+        app.apply(Action::Insert('漢'));
+        app.apply(Action::Save);
+        assert!(app.message.as_deref().unwrap().contains("Latin-1"));
+        assert!(app.editor().is_dirty(), "a failed save must stay dirty");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unnamed_buffer_cannot_be_saved_yet() {
+        let mut app = App::from_text("", "");
+        app.apply(Action::Insert('x'));
+        app.apply(Action::Save);
+        assert!(app.message.as_deref().unwrap().contains("no filename"));
+        assert!(app.editor().is_dirty());
     }
 
     #[test]

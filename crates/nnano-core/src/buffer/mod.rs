@@ -11,10 +11,12 @@
 //!   and width mapping stay at the edges (`grapheme`, `render`, `save`).
 
 mod cursor;
+pub mod encoding;
 mod grapheme;
 mod rope;
 
 pub use cursor::Cursor;
+pub use encoding::{DecodeError, EncodeError, Encoding, Loaded};
 pub use grapheme::{
     DEFAULT_TAB_WIDTH, Width, char_offset_for_column, line_visual_column, next_tab_stop,
 };

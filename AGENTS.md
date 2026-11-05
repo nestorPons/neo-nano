@@ -3,10 +3,11 @@
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
 ## Status (2026-11-05)
-- **Phase 3 done** (2026-11-05): `nnano-core::editor` (`Action` + `Editor` with typing, backspace/delete, joins, movement and a visual goal column) and `term/input.rs` decoding keys into that `Action`. `nnano <file>` is now an editable buffer with a `[Modified]` marker; nothing is written to disk yet.
-- Deferred keys decode to `None` on purpose (`^S`, `^O`, `^K`, `^U`, `^Z`, `^F`, `^P`, `Esc`, …) and a test pins that list; each gains its action with its phase.
-- `nnano-core` stubs still empty: `config/`, `search.rs`, `syntax.rs`; no option registry, no save, no undo.
-- Verified in a real pty: typing, tab, Enter, CJK input, arrows, `Home`, `Backspace` and `^Q` all behave; `[Modified]` appears as soon as the buffer changes, and a narrow terminal clips the title instead of the cursor position.
+- **Phase 4 done** (2026-11-05): in-place `^S` (truncate → write → flush, no temp file, no `file~`), encoding detection with Latin-1 byte-identical round-trip and UTF-16 refused, quit confirmation on a dirty buffer, `nnano -` stdin buffer, and a one-line status message channel (saved / failed / confirm / Latin-1 warning).
+- Not yet: recovery file, save-as (`M-S`) and `^O` open-by-path (both need a prompt), undo, search, syntax. `^S` on an unnamed or stdin buffer says so instead of writing.
+- No fsync after write: a crash right after `^S` can lose the write; the recovery file is the only net (still pending).
+- `nnano-core` stubs still empty: `config/`, `search.rs`, `syntax.rs`; no option registry, no undo.
+- Verified in a real pty: edit + `^S` writes and clears `[Modified]`; a dirty `^Q` waits for a second press and writes nothing; Latin-1 file loads with a warning and round-trips byte-identically; `nnano -` renders piped stdin with keys still coming from `/dev/tty`; UTF-16 exits 1 with a clear message.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -88,7 +89,7 @@ Each row that becomes an option costs one registry row, one overlay widget and f
 - **Clipboard**: internal register always; OSC 52 opt-in, capped at 64 KiB per copy — above that, truncate with a visible warning rather than block on a slow SSH tty.
 - **Autosave off**; **recovery file on**: `$XDG_STATE_HOME/nnano/recovery/<hash of absolute path>.swp` (fallback `~/.local/state/nnano/recovery/`), written on a 2 s idle debounce once the buffer is dirty, never from the redraw cycle; deleted after a successful save and on a clean exit.
 - **Colours**: no truecolor and no theme files in v1; the default style is the terminal's own foreground/background plus the semantic colour enum.
-- **Encoding**: detect and warn only. Saving never transcodes; a Latin-1 file round-trips byte-identical.
+- **Encoding**: detect and warn only. Saving never transcodes; a Latin-1 file round-trips byte-identical. Implementation (2026-11-05): UTF-8 when the bytes parse as UTF-8, otherwise Latin-1 read as the byte→`U+00NN` bijection so every byte survives; a UTF-16 BOM is refused, never guessed; a UTF-8 BOM stays in the text as `U+FEFF`. Saving a Latin-1 buffer stops at the first char outside `U+0000..=U+00FF` with an error instead of replacing it.
 - **`nnano -`**: reads stdin into an ephemeral buffer; saving requires a filename (stdin is not seekable, so there is no in-place save).
 
 ## Keymap: desktop-first (decided 2026-11-04)
@@ -124,7 +125,9 @@ Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` /
 
 User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
 
-Implemented rows (2026-11-05): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 4–7).
+Implemented rows (2026-11-05): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 5–7).
+
+`^Q` on a dirty buffer asks once: the status bar shows *unsaved changes: `^Q` again to quit, `^S` to save* and any other key cancels the pending quit. A real dialog replaces this in phase 5.
 
 Terminal constraints that gate the table (verify at startup, never assume):
 - Disable flow control and `ISIG` so `^S`, `^Q`, `^C`, `^Z` reach the app as keys, not XOFF/SIGINT/SIGTSTP.
