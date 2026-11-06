@@ -4,12 +4,12 @@
 //! panic hook, capability detection, input decoding, drawing and overlays. All
 //! editor semantics stay in `nnano-core`.
 //!
-//! Event loop (phase 4): `poll(16ms)` -> decode one key into an `Action` -> apply
-//! -> redraw only when dirty. No fixed tick, no async runtime, no worker thread.
+//! Event loop: `poll(16ms)` -> decode one event into an `Action` -> apply ->
+//! redraw only when dirty. No fixed tick, no async runtime, no worker thread.
 //!
-//! Phase 5 adds the overlays. They are not a second key path: an overlay consumes
-//! the same `Action` values the editor would, and only one overlay is open at a
-//! time.
+//! Tabs are buffers: `App` owns a `Vec<Document>`, each with its own rope, cursor,
+//! viewport and undo history. There is still one viewport on screen; a one-row
+//! buffer bar appears when more than one buffer is open.
 
 pub mod term;
 pub mod ui;
@@ -36,25 +36,73 @@ use crate::ui::viewport::Viewport;
 /// the app is dirty.
 const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
-/// Application state: one buffer, one cursor, one viewport (no split view).
+/// One open buffer: its rope, cursor, undo history and scroll offset.
 #[derive(Debug)]
-pub struct App {
-    /// Buffer name as shown in the status bar.
+pub struct Document {
+    /// Name as shown in the status bar and the buffer bar.
     pub(crate) file: String,
-    pub(crate) caps: Caps,
-    editor: Editor,
-    viewport: Viewport,
-    body_height: u16,
-    redraw: bool,
-    quit: bool,
     /// Where `^S` writes. `None` for an unnamed buffer and for stdin, which is not
     /// seekable and therefore cannot be saved in place.
     path: Option<PathBuf>,
     encoding: Encoding,
+    editor: Editor,
+    viewport: Viewport,
+}
+
+impl Document {
+    fn empty(name: &str) -> Self {
+        Self {
+            file: label(name),
+            path: None,
+            encoding: Encoding::Utf8,
+            editor: Editor::new(),
+            viewport: Viewport::default(),
+        }
+    }
+
+    fn from_text(name: &str, text: &str) -> Self {
+        Self {
+            editor: Editor::from_text(text),
+            ..Self::empty(name)
+        }
+    }
+
+    /// Decode already-read bytes. Detection only: Latin-1 loads with a warning,
+    /// UTF-16 is refused.
+    fn from_bytes(name: &str, path: Option<PathBuf>, bytes: &[u8]) -> io::Result<Self> {
+        let loaded = encoding::decode(bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        Ok(Self {
+            path,
+            encoding: loaded.encoding,
+            ..Self::from_text(name, &loaded.text)
+        })
+    }
+}
+
+fn label(name: &str) -> String {
+    if name.is_empty() {
+        "[No Name]".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Application state: a list of buffers, one active, one viewport on screen.
+#[derive(Debug)]
+pub struct App {
+    docs: Vec<Document>,
+    active: usize,
+    pub(crate) caps: Caps,
+    body_height: u16,
+    redraw: bool,
+    quit: bool,
     /// One status-bar line, cleared by the next action.
     message: Option<String>,
     /// `^Q` was pressed once on a dirty buffer and is waiting for a second press.
     confirm_quit: bool,
+    /// `^W` was pressed once on a dirty buffer and is waiting for a second press.
+    confirm_close: bool,
     /// Effective options: the same values the CLI, TOML and nanorc layers
     /// produced, kept live so the settings overlay cannot drift.
     config: Config,
@@ -70,82 +118,69 @@ pub struct App {
 impl App {
     /// Empty buffer named `[No Name]`.
     pub fn new() -> Self {
-        Self::from_text("", "")
+        Self::from_docs(vec![Document::empty("")])
     }
 
     /// A buffer with known text and no path, used by tests and by `from_bytes`.
     pub fn from_text(file: &str, text: &str) -> Self {
+        Self::from_docs(vec![Document::from_text(file, text)])
+    }
+
+    fn from_docs(docs: Vec<Document>) -> Self {
         let config = Config::defaults();
-        let mut editor = Editor::from_text(text);
-        editor.set_tab_width(config.int(Opt::TabSize).max(1) as usize);
-        Self {
-            file: if file.is_empty() {
-                "[No Name]".to_string()
-            } else {
-                file.to_string()
-            },
+        let mut app = Self {
+            docs,
+            active: 0,
             caps: Caps::detect(),
-            editor,
-            viewport: Viewport::default(),
             body_height: 0,
             redraw: true,
             quit: false,
-            path: None,
-            encoding: Encoding::Utf8,
             message: None,
             confirm_quit: false,
+            confirm_close: false,
             config,
             overlay: None,
             find: FindSettings::default(),
             screen: (0, 0),
-        }
+        };
+        app.sync_editors();
+        app
     }
 
     /// Open `target`: a file path, `-` for stdin, or nothing for an empty buffer.
     /// A missing file opens an empty buffer with that name and is created by `^S`.
     pub fn open(target: Option<String>) -> io::Result<Self> {
-        match target.as_deref() {
-            None => Ok(Self::new()),
+        let doc = match target.as_deref() {
+            None => Document::empty(""),
             Some("-") => {
                 let mut bytes = Vec::new();
                 io::stdin().read_to_end(&mut bytes)?;
-                Self::from_bytes("[stdin]", None, &bytes)
+                Document::from_bytes("[stdin]", None, &bytes)?
             }
             Some(name) => {
                 let path = PathBuf::from(name);
                 match std::fs::read(&path) {
-                    Ok(bytes) => Self::from_bytes(name, Some(path), &bytes),
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                        let mut app = Self::from_text(name, "");
-                        app.path = Some(path);
-                        Ok(app)
-                    }
-                    Err(err) => Err(err),
+                    Ok(bytes) => Document::from_bytes(name, Some(path), &bytes)?,
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => Document {
+                        path: Some(path),
+                        ..Document::empty(name)
+                    },
+                    Err(err) => return Err(err),
                 }
             }
-        }
-    }
-
-    /// Decode already-read bytes. Detection only: Latin-1 loads with a warning,
-    /// UTF-16 is refused.
-    fn from_bytes(name: &str, path: Option<PathBuf>, bytes: &[u8]) -> io::Result<Self> {
-        let loaded = encoding::decode(bytes)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        let mut app = Self::from_text(name, &loaded.text);
-        app.path = path;
-        app.encoding = loaded.encoding;
-        if loaded.encoding == Encoding::Latin1 {
+        };
+        let mut app = Self::from_docs(vec![doc]);
+        if app.document().encoding == Encoding::Latin1 {
             app.inform("read as Latin-1 (not UTF-8); saving keeps the same bytes");
         }
         Ok(app)
     }
 
-    /// Adopt the merged configuration: the `tab_size` the renderer uses and the
-    /// default search case come from here, never from a hardcoded constant.
+    /// Adopt the merged configuration: the `tab_size` every buffer uses.
     pub fn apply_config(&mut self, config: Config) {
         self.find.case_sensitive = config.bool(Opt::CaseSensitive);
         self.config = config;
-        self.sync_editor();
+        self.sync_editors();
     }
 
     /// Run until the user quits. The `Session` guard restores the terminal on
@@ -169,9 +204,9 @@ impl App {
             if self.redraw {
                 let size = session.terminal().size()?;
                 self.screen = (size.width, size.height);
-                let body_height = size.height.saturating_sub(1);
-                self.body_height = body_height;
-                ui::ensure_cursor_visible(&mut self, size.width, body_height);
+                let (_, body, _) = ui::areas(self.screen_rect(), self.buffer_count());
+                self.body_height = body.height;
+                ui::ensure_cursor_visible(&mut self, body.width, body.height);
                 session.terminal().draw(|frame| ui::draw(frame, &self))?;
                 self.redraw = false;
             }
@@ -198,106 +233,24 @@ impl App {
         Ok(())
     }
 
-    /// Mouse: click places the cursor, drag marks, wheel scrolls. Alt+drag is a
-    /// rectangular mark. Panels take clicks on their rows.
-    fn on_mouse(&mut self, event: MouseEvent) {
-        if !self.config.bool(Opt::Mouse) {
-            return;
-        }
-        if self.overlay.is_some() {
-            self.on_overlay_mouse(event);
-            return;
-        }
-        let body = self.body_rect();
-        match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                let Some((line, col)) = self.hit_test(event.column, event.row, body) else {
-                    return;
-                };
-                if event.modifiers.contains(KeyModifiers::ALT) && !self.editor.block_mode() {
-                    self.apply(Action::ToggleBlockSelection);
-                }
-                self.apply(Action::ClickAt(line, col));
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some((line, col)) = self.hit_test(event.column, event.row, body) {
-                    self.apply(Action::ExtendTo(line, col));
-                }
-            }
-            MouseEventKind::ScrollDown => self.apply(Action::ScrollView(3)),
-            MouseEventKind::ScrollUp => self.apply(Action::ScrollView(-3)),
-            _ => {}
-        }
-    }
-
-    fn on_overlay_mouse(&mut self, event: MouseEvent) {
-        if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
-            return;
-        }
-        let body = self.body_rect();
-        let Some(overlay) = self.overlay.take() else {
-            return;
-        };
-        match overlay {
-            Overlay::Settings(mut settings) => {
-                if let Some(index) = ui::overlays::settings::row_at(body, event.row) {
-                    settings.select(index);
-                }
-                self.overlay = Some(Overlay::Settings(settings));
-            }
-            Overlay::Palette(mut palette) => {
-                if let Some(index) = ui::overlays::palette::row_at(body, event.row, &palette) {
-                    palette.select(index);
-                    if let Some(action) = palette.selected_action() {
-                        self.apply(action);
-                        return;
-                    }
-                }
-                self.overlay = Some(Overlay::Palette(palette));
-            }
-            other => self.overlay = Some(other),
-        }
-    }
-
-    /// Screen cell -> `(line, char col)` inside the body, or nothing outside it.
-    fn hit_test(&self, x: u16, y: u16, body: ratatui::layout::Rect) -> Option<(usize, usize)> {
-        if x < body.x
-            || y < body.y
-            || x >= body.x.saturating_add(body.width)
-            || y >= body.y.saturating_add(body.height)
-        {
-            return None;
-        }
-        let buffer = self.editor.buffer();
-        let line = self.viewport.top_line + usize::from(y - body.y);
-        if line >= buffer.line_count() {
-            return None;
-        }
-        let target = self.viewport.left_col + usize::from(x - body.x);
-        let col = ui::text::column_to_char(buffer, line, target, self.tab_width());
-        Some((line, col))
-    }
-
-    /// The text area: everything above the status row.
-    fn body_rect(&self) -> ratatui::layout::Rect {
-        let (width, height) = self.screen;
-        ratatui::layout::Rect::new(0, 0, width, height.saturating_sub(1))
-    }
-
-    /// Single mutation path: keyboard, palette and (later) mouse all land here.
+    /// Single mutation path: keyboard, palette and mouse all land here.
     fn apply(&mut self, action: Action) {
-        let confirming = std::mem::take(&mut self.confirm_quit);
+        let confirming_quit = std::mem::take(&mut self.confirm_quit);
+        let confirming_close = std::mem::take(&mut self.confirm_close);
         self.message = None;
 
         if self.overlay.is_some() {
-            self.apply_overlay(action, confirming);
+            self.apply_overlay(action, confirming_quit);
             self.redraw = true;
             return;
         }
 
         match action {
-            Action::Quit => self.request_quit(confirming),
+            Action::Quit => self.request_quit(confirming_quit),
             Action::Save => self.save(),
+            Action::NewBuffer | Action::NewTab => self.new_buffer(),
+            Action::CloseBuffer => self.close_buffer(confirming_close),
+            Action::SwitchBuffer(index) => self.switch_to(index),
             Action::OpenFind => self.overlay = Some(Overlay::Find(self.find.open())),
             Action::OpenPalette => self.overlay = Some(Overlay::Palette(Palette::new())),
             Action::OpenSettings => self.overlay = Some(Overlay::Settings(Settings::new())),
@@ -307,15 +260,20 @@ impl App {
             // `M-B` outside a prompt repeats the search backwards; inside one it
             // toggles the direction (handled by the overlay).
             Action::ToggleBackwards => self.repeat_find(Direction::Backward),
-            // `M-C`/`M-R` only mean something in a prompt; `M-R` will open Replace
-            // in phase 7.
-            Action::Cancel => self.editor.clear_selection(),
+            // `M-C`/`M-R` only mean something in a prompt.
+            Action::Cancel => self.editor_mut().clear_selection(),
             Action::ToggleCase | Action::ToggleRegexp => {}
             Action::ScrollView(delta) => self.scroll(delta),
             // Pages are the only actions that need viewport geometry.
-            Action::PageUp => self.editor.move_vertical(-page_step(self.body_height)),
-            Action::PageDown => self.editor.move_vertical(page_step(self.body_height)),
-            other => self.editor.apply(other),
+            Action::PageUp => {
+                let step = page_step(self.body_height);
+                self.editor_mut().move_vertical(-step);
+            }
+            Action::PageDown => {
+                let step = page_step(self.body_height);
+                self.editor_mut().move_vertical(step);
+            }
+            other => self.editor_mut().apply(other),
         }
         self.redraw = true;
     }
@@ -362,8 +320,16 @@ impl App {
             Overlay::Palette(mut palette) => match action {
                 Action::Cancel => {}
                 Action::Newline => {
-                    if let Some(action) = palette.selected_action() {
-                        self.apply(action);
+                    let buffers = self.buffer_names();
+                    if let Some(row) = palette.selected_row(&buffers) {
+                        match row {
+                            crate::ui::overlays::palette::Row::Command(command) => {
+                                self.apply(command.action.clone());
+                            }
+                            crate::ui::overlays::palette::Row::Buffer(index) => {
+                                self.switch_to(index);
+                            }
+                        }
                     }
                 }
                 Action::MoveUp => {
@@ -371,7 +337,8 @@ impl App {
                     self.overlay = Some(Overlay::Palette(palette));
                 }
                 Action::MoveDown => {
-                    palette.select_next();
+                    let buffers = self.buffer_names();
+                    palette.select_next(&buffers);
                     self.overlay = Some(Overlay::Palette(palette));
                 }
                 Action::Quit => {
@@ -388,7 +355,7 @@ impl App {
                 }
                 other => {
                     if settings.handle(other, &mut self.config).is_some() {
-                        self.sync_editor();
+                        self.sync_editors();
                     }
                     self.overlay = Some(Overlay::Settings(settings));
                 }
@@ -401,9 +368,9 @@ impl App {
         }
     }
 
-    /// `^Q`: quit, or ask once when the buffer has unsaved changes.
+    /// `^Q`: quit, or ask once when any buffer has unsaved changes.
     fn request_quit(&mut self, confirming: bool) {
-        if self.editor.is_dirty() && !confirming {
+        if self.any_dirty() && !confirming {
             self.confirm_quit = true;
             self.inform("unsaved changes: ^Q again to quit, ^S to save");
         } else {
@@ -411,27 +378,59 @@ impl App {
         }
     }
 
-    /// Wheel scrolling moves the window, not the cursor, so a mouse wheel never
-    /// destroys a mark or edits anything.
-    fn scroll(&mut self, delta: isize) {
-        let last = self.editor.buffer().line_count().saturating_sub(1);
-        let top = self.viewport.top_line.saturating_add_signed(delta);
-        self.viewport.top_line = top.min(last);
-    }
-
-    /// `^S`. Writes in place when there is a path; nothing is written otherwise.
+    /// `^S`. Writes the active buffer in place when it has a path.
     fn save(&mut self) {
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.document().path.clone() else {
             self.inform("no filename yet: save-as is not implemented");
             return;
         };
-        match save_in_place(&path, self.editor.buffer(), self.encoding) {
+        let encoding = self.document().encoding;
+        match save_in_place(&path, self.editor().buffer(), encoding) {
             Ok(()) => {
-                self.editor.mark_saved();
+                self.editor_mut().mark_saved();
                 self.inform(format!("saved {}", path.display()));
             }
             Err(err) => self.inform(format!("save failed: {err}")),
         }
+    }
+
+    /// `^N`/`^T`: a fresh empty buffer becomes the active one.
+    fn new_buffer(&mut self) {
+        self.docs.push(Document::empty(""));
+        self.active = self.docs.len() - 1;
+        self.sync_editors();
+    }
+
+    /// `^W`: close the active buffer, asking once when it is dirty. Closing the
+    /// last buffer leaves the editor.
+    fn close_buffer(&mut self, confirming: bool) {
+        if self.document().editor.is_dirty() && !confirming {
+            self.confirm_close = true;
+            self.inform("unsaved changes: ^W again to close this buffer, ^S to save");
+            return;
+        }
+        if self.docs.len() == 1 {
+            self.quit = true;
+            return;
+        }
+        self.docs.remove(self.active);
+        self.active = self.active.min(self.docs.len() - 1);
+        self.redraw = true;
+    }
+
+    fn switch_to(&mut self, index: usize) {
+        if index < self.docs.len() {
+            self.active = index;
+            self.redraw = true;
+        }
+    }
+
+    /// Wheel scrolling moves the window, not the cursor, so a mouse wheel never
+    /// destroys a mark or edits anything.
+    fn scroll(&mut self, delta: isize) {
+        let last = self.editor().buffer().line_count().saturating_sub(1);
+        let top = self.viewport().top_line.saturating_add_signed(delta);
+        self.viewport_mut().top_line = top.min(last);
     }
 
     /// The prompt was accepted: compile once and jump to the first hit.
@@ -451,7 +450,7 @@ impl App {
                 }
             };
         let from = self.cursor_index();
-        let hit = search.find(self.editor.buffer(), from, direction);
+        let hit = search.find(self.editor().buffer(), from, direction);
         self.jump_to(hit);
     }
 
@@ -474,15 +473,15 @@ impl App {
             Direction::Forward => cursor.saturating_add(1),
             Direction::Backward => cursor,
         };
-        let hit = search.find(self.editor.buffer(), from, direction);
+        let hit = search.find(self.editor().buffer(), from, direction);
         self.jump_to(hit);
     }
 
     fn jump_to(&mut self, hit: Option<nnano_core::search::Hit>) {
         match hit {
             Some(hit) => {
-                let (line, col) = self.editor.buffer().char_to_position(hit.start);
-                self.editor.set_cursor(line, col);
+                let (line, col) = self.editor().buffer().char_to_position(hit.start);
+                self.editor_mut().set_cursor(line, col);
                 if hit.wrapped {
                     self.inform("search wrapped");
                 }
@@ -495,30 +494,48 @@ impl App {
     }
 
     fn cursor_index(&self) -> usize {
-        self.editor.cursor().char_index(self.editor.buffer())
+        self.editor().cursor().char_index(self.editor().buffer())
     }
 
-    /// Push `tab_size` into the editor after the settings overlay changed it.
-    fn sync_editor(&mut self) {
+    /// Push `tab_size` into every buffer after the settings overlay changed it.
+    fn sync_editors(&mut self) {
         let width = self.tab_width();
-        self.editor.set_tab_width(width);
+        for document in &mut self.docs {
+            document.editor.set_tab_width(width);
+        }
         self.redraw = true;
+    }
+
+    fn any_dirty(&self) -> bool {
+        self.docs.iter().any(|document| document.editor.is_dirty())
     }
 
     fn inform(&mut self, message: impl Into<String>) {
         self.message = Some(message.into());
     }
 
+    pub(crate) fn document(&self) -> &Document {
+        &self.docs[self.active]
+    }
+
+    pub(crate) fn document_mut(&mut self) -> &mut Document {
+        &mut self.docs[self.active]
+    }
+
     pub(crate) fn editor(&self) -> &Editor {
-        &self.editor
+        &self.document().editor
+    }
+
+    pub(crate) fn editor_mut(&mut self) -> &mut Editor {
+        &mut self.document_mut().editor
     }
 
     pub(crate) fn viewport(&self) -> &Viewport {
-        &self.viewport
+        &self.document().viewport
     }
 
     pub(crate) fn viewport_mut(&mut self) -> &mut Viewport {
-        &mut self.viewport
+        &mut self.document_mut().viewport
     }
 
     pub(crate) fn config(&self) -> &Config {
@@ -526,7 +543,7 @@ impl App {
     }
 
     pub(crate) fn selection(&self) -> Option<&Selection> {
-        self.editor.selection()
+        self.editor().selection()
     }
 
     pub(crate) fn overlay(&self) -> Option<&Overlay> {
@@ -537,7 +554,32 @@ impl App {
         &self.find
     }
 
-    /// `tab_size` from the registry; the renderer and the editor share it.
+    pub(crate) fn buffer_count(&self) -> usize {
+        self.docs.len()
+    }
+
+    pub(crate) fn active_buffer(&self) -> usize {
+        self.active
+    }
+
+    pub(crate) fn buffer_names(&self) -> Vec<String> {
+        self.docs
+            .iter()
+            .map(|document| document.file.clone())
+            .collect()
+    }
+
+    /// Encoding of the active buffer (tests and, later, a status indicator).
+    #[cfg(test)]
+    pub(crate) fn encoding(&self) -> Encoding {
+        self.document().encoding
+    }
+
+    pub(crate) fn file_name(&self) -> &str {
+        &self.document().file
+    }
+
+    /// `tab_size` from the registry; the renderer and every editor share it.
     pub(crate) fn tab_width(&self) -> usize {
         let width = self.config.int(Opt::TabSize);
         usize::try_from(width.max(1)).unwrap_or(DEFAULT_TAB_WIDTH)
@@ -546,7 +588,7 @@ impl App {
     /// Test seam: move the cursor and mark the frame dirty.
     #[cfg(test)]
     pub(crate) fn set_cursor(&mut self, line: usize, col: usize) {
-        self.editor.set_cursor(line, col);
+        self.editor_mut().set_cursor(line, col);
         self.redraw = true;
     }
 
@@ -557,15 +599,18 @@ impl App {
     }
 
     /// Left of the status bar: a message if there is one, otherwise identity,
-    /// dirty marker and the multiplexer notice. `^B`/`^A` are documented, never
-    /// rebound: the multiplexer keeps its prefix.
+    /// dirty marker, buffer position and the multiplexer notice. `^B`/`^A` are
+    /// documented, never rebound: the multiplexer keeps its prefix.
     fn status_left(&self) -> String {
         if let Some(message) = &self.message {
             return format!(" {message}");
         }
         let mut text = format!(" nnano {}", env!("CARGO_PKG_VERSION"));
-        if self.editor.is_dirty() {
+        if self.any_dirty() {
             text.push_str("  [Modified]");
+        }
+        if self.docs.len() > 1 {
+            text.push_str(&format!("  {}/{}", self.active + 1, self.docs.len()));
         }
         if self.caps.tmux {
             text.push_str("   ^B: tmux prefix");
@@ -579,10 +624,141 @@ impl App {
     /// nano prints it.
     fn status_right(&self) -> String {
         let (line, col) = self
-            .editor
+            .editor()
             .cursor()
-            .display_position(self.editor.buffer(), self.tab_width());
-        format!("{line}:{col}  {} ", self.file)
+            .display_position(self.editor().buffer(), self.tab_width());
+        format!("{line}:{col}  {} ", self.file_name())
+    }
+
+    /// Mouse: click places the cursor, drag marks, wheel scrolls. Alt+drag is a
+    /// rectangular mark. The buffer bar switches buffers; panels take row clicks.
+    fn on_mouse(&mut self, event: MouseEvent) {
+        if !self.config.bool(Opt::Mouse) {
+            return;
+        }
+        if self.overlay.is_some() {
+            self.on_overlay_mouse(event);
+            return;
+        }
+        if let Some(tabs) = self.tabs_rect()
+            && self.hits(event.column, event.row, tabs)
+        {
+            if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+                && let Some(index) = self.tab_at(event.column)
+            {
+                self.switch_to(index);
+            }
+            return;
+        }
+        let body = self.body_rect();
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some((line, col)) = self.hit_test(event.column, event.row, body) else {
+                    return;
+                };
+                if event.modifiers.contains(KeyModifiers::ALT) && !self.editor().block_mode() {
+                    self.apply(Action::ToggleBlockSelection);
+                }
+                self.apply(Action::ClickAt(line, col));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some((line, col)) = self.hit_test(event.column, event.row, body) {
+                    self.apply(Action::ExtendTo(line, col));
+                }
+            }
+            MouseEventKind::ScrollDown => self.apply(Action::ScrollView(3)),
+            MouseEventKind::ScrollUp => self.apply(Action::ScrollView(-3)),
+            _ => {}
+        }
+    }
+
+    fn on_overlay_mouse(&mut self, event: MouseEvent) {
+        if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let body = self.body_rect();
+        let Some(overlay) = self.overlay.take() else {
+            return;
+        };
+        match overlay {
+            Overlay::Settings(mut settings) => {
+                if let Some(index) = ui::overlays::settings::row_at(body, event.row) {
+                    settings.select(index);
+                }
+                self.overlay = Some(Overlay::Settings(settings));
+            }
+            Overlay::Palette(mut palette) => {
+                let buffers = self.buffer_names();
+                if let Some(index) =
+                    ui::overlays::palette::row_at(body, event.row, &palette, &buffers)
+                {
+                    palette.select(index);
+                    if let Some(row) = palette.selected_row(&buffers) {
+                        match row {
+                            crate::ui::overlays::palette::Row::Command(command) => {
+                                self.apply(command.action.clone());
+                                return;
+                            }
+                            crate::ui::overlays::palette::Row::Buffer(index) => {
+                                self.switch_to(index);
+                                return;
+                            }
+                        }
+                    }
+                }
+                self.overlay = Some(Overlay::Palette(palette));
+            }
+            other => self.overlay = Some(other),
+        }
+    }
+
+    /// Screen cell -> `(line, char col)` inside the body, or nothing outside it.
+    fn hit_test(&self, x: u16, y: u16, body: ratatui::layout::Rect) -> Option<(usize, usize)> {
+        if !self.hits(x, y, body) {
+            return None;
+        }
+        let buffer = self.editor().buffer();
+        let line = self.viewport().top_line + usize::from(y - body.y);
+        if line >= buffer.line_count() {
+            return None;
+        }
+        let target = self.viewport().left_col + usize::from(x - body.x);
+        let col = ui::text::column_to_char(buffer, line, target, self.tab_width());
+        Some((line, col))
+    }
+
+    fn hits(&self, x: u16, y: u16, area: ratatui::layout::Rect) -> bool {
+        x >= area.x
+            && y >= area.y
+            && x < area.x.saturating_add(area.width)
+            && y < area.y.saturating_add(area.height)
+    }
+
+    /// Buffer under a click on the tab bar.
+    fn tab_at(&self, x: u16) -> Option<usize> {
+        let mut left = 1u16;
+        for (index, name) in self.buffer_names().iter().enumerate() {
+            let width = u16::try_from(name.chars().count()).unwrap_or(u16::MAX);
+            if x >= left && x < left.saturating_add(width + 2) {
+                return Some(index);
+            }
+            left = left.saturating_add(width + 3);
+        }
+        None
+    }
+
+    fn screen_rect(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, self.screen.0, self.screen.1)
+    }
+
+    fn body_rect(&self) -> ratatui::layout::Rect {
+        let (_, body, _) = ui::areas(self.screen_rect(), self.buffer_count());
+        body
+    }
+
+    fn tabs_rect(&self) -> Option<ratatui::layout::Rect> {
+        let (tabs, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
+        tabs
     }
 }
 
@@ -625,7 +801,6 @@ pub fn run(file: Option<String>, config: Config) -> io::Result<()> {
     app.apply_config(config);
     app.run()
 }
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -761,9 +936,18 @@ mod tests {
         let mut app = App::from_text("s.txt", "");
         app.screen = (80, 24);
         app.apply(Action::OpenPalette);
-        // Filter row at 7, commands at 8..=14: the last one is Quit.
-        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 10, 14));
-        assert!(app.quit);
+        // Rows = commands + buffers; panel height = rows + 3, centered in the
+        // 23-row body, with one border row and one filter row above the list.
+        let rows = super::ui::overlays::palette::COMMANDS.len() + app.buffer_count();
+        let height = u16::try_from(rows + 3).unwrap();
+        let first_row = (23 - height) / 2 + 2;
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            10,
+            first_row,
+        ));
+        // The first command is Save file, and this buffer has no path.
+        assert!(app.message().unwrap().contains("no filename"));
     }
 
     #[test]
@@ -830,7 +1014,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let app = open_file(&path);
         assert!(app.editor().buffer().is_empty());
-        assert!(app.file.contains("missing"));
+        assert!(app.file_name().contains("missing"));
     }
 
     #[test]
@@ -848,7 +1032,7 @@ mod tests {
         let path = temp("latin1.txt");
         std::fs::write(&path, b"caf\xE9\r\n").unwrap();
         let app = open_file(&path);
-        assert_eq!(app.encoding, Encoding::Latin1);
+        assert_eq!(app.encoding(), Encoding::Latin1);
         assert_eq!(text(&app), "café\\n");
         assert!(app.message().unwrap().contains("Latin-1"));
         let _ = std::fs::remove_file(&path);
@@ -925,7 +1109,7 @@ mod tests {
     #[test]
     fn no_argument_opens_an_unnamed_buffer() {
         let app = App::open(None).unwrap();
-        assert_eq!(app.file, "[No Name]");
+        assert_eq!(app.file_name(), "[No Name]");
     }
 
     #[test]
@@ -1117,5 +1301,112 @@ mod tests {
         assert!(app.confirm_quit);
         app.apply(Action::Quit);
         assert!(app.quit);
+    }
+
+    #[test]
+    fn new_buffers_are_added_and_become_active() {
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::NewBuffer);
+        assert_eq!(app.buffer_count(), 2);
+        assert_eq!(app.active_buffer(), 1);
+        assert_eq!(app.file_name(), "[No Name]");
+        assert!(app.editor().buffer().is_empty());
+
+        app.apply(Action::SwitchBuffer(0));
+        assert_eq!(app.file_name(), "uno.txt");
+        assert_eq!(app.editor().buffer().line_text(0), "uno");
+    }
+
+    #[test]
+    fn each_buffer_has_its_own_undo_history_and_cursor() {
+        let mut app = App::from_text("uno.txt", "");
+        app.apply(Action::Insert('a'));
+        app.apply(Action::NewBuffer);
+        app.apply(Action::Insert('b'));
+        app.apply(Action::Undo);
+        assert!(
+            app.editor().buffer().is_empty(),
+            "second buffer undoes alone"
+        );
+        app.apply(Action::SwitchBuffer(0));
+        assert_eq!(app.editor().buffer().line_text(0), "a");
+    }
+
+    #[test]
+    fn closing_a_dirty_buffer_asks_once_and_then_closes() {
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::NewBuffer);
+        app.apply(Action::Insert('x'));
+        app.apply(Action::CloseBuffer);
+        assert!(!app.quit, "closing was not confirmed");
+        assert_eq!(app.buffer_count(), 2);
+        assert!(app.message().unwrap().contains("^W again"));
+
+        app.apply(Action::CloseBuffer);
+        assert_eq!(app.buffer_count(), 1);
+        assert_eq!(app.file_name(), "uno.txt");
+    }
+
+    #[test]
+    fn closing_a_clean_buffer_does_not_ask() {
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::NewBuffer);
+        app.apply(Action::CloseBuffer);
+        assert_eq!(app.buffer_count(), 1);
+    }
+
+    #[test]
+    fn closing_the_last_buffer_leaves_the_editor() {
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::CloseBuffer);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn closing_a_dirty_last_buffer_asks_and_then_quits() {
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::Insert('x'));
+        app.apply(Action::CloseBuffer);
+        assert!(!app.quit);
+        app.apply(Action::CloseBuffer);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn switching_buffers_keeps_the_scroll_offset() {
+        let text = (0..80).map(|n| format!("line {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        app.apply(Action::NewBuffer);
+        app.apply(Action::SwitchBuffer(1));
+        assert_eq!(app.viewport().top_line, 0);
+        app.set_cursor(60, 0);
+        app.apply(Action::PageDown);
+        let top = app.viewport().top_line;
+        app.apply(Action::SwitchBuffer(0));
+        assert_eq!(app.viewport().top_line, 0);
+        app.apply(Action::SwitchBuffer(1));
+        assert_eq!(app.viewport().top_line, top);
+    }
+
+    #[test]
+    fn the_status_bar_counts_the_buffers() {
+        let mut app = App::from_text("uno.txt", "");
+        app.apply(Action::NewBuffer);
+        assert!(app.status_left().contains("2/2"));
+        app.apply(Action::SwitchBuffer(0));
+        assert!(app.status_left().contains("1/2"));
+    }
+
+    #[test]
+    fn mouse_clicks_on_the_buffer_bar_switch_buffers() {
+        let mut app = App::from_text("uno.txt", "");
+        app.apply(Action::NewBuffer);
+        app.screen = (80, 24);
+        // " [No Name] " starts at column 1; the second segment follows.
+        let names = app.buffer_names();
+        let layout = super::ui::tab_layout(&names);
+        let (left, _) = layout[0];
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), left + 1, 0));
+        assert_eq!(app.active_buffer(), 0);
     }
 }

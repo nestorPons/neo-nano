@@ -21,11 +21,39 @@ use ratatui::widgets::Paragraph;
 use crate::App;
 use crate::ui::overlays::Overlay;
 
-/// Draw a whole frame: text area above, one-row status bar below, plus whatever
-/// overlay currently owns the keys.
+/// The screen split: an optional one-row buffer bar, the text area and the status
+/// row. Shared by the renderer and the mouse hit test so clicks land where things
+/// are drawn.
+pub fn areas(area: Rect, buffers: usize) -> (Option<Rect>, Rect, Rect) {
+    let tab_rows = u16::from(buffers > 1);
+    let [tabs, body, status] = Layout::vertical([
+        Constraint::Length(tab_rows),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    (if tab_rows > 0 { Some(tabs) } else { None }, body, status)
+}
+
+/// X offset and width of each buffer in the one-row bar, starting at column 1.
+pub(crate) fn tab_layout(names: &[String]) -> Vec<(u16, u16)> {
+    let mut layout = Vec::with_capacity(names.len());
+    let mut x = 1u16;
+    for name in names {
+        let width = u16::try_from(line_visual_column(name.chars(), 1) + 2).unwrap_or(u16::MAX);
+        layout.push((x, width));
+        x = x.saturating_add(width).saturating_add(1);
+    }
+    layout
+}
+
+/// Draw a whole frame: buffer bar (when several buffers are open), text area,
+/// one-row status bar, plus whatever overlay currently owns the keys.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let [body, status] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let (tabs, body, status) = areas(frame.area(), app.buffer_count());
+    if let Some(tabs) = tabs {
+        draw_tabs(frame, tabs, app);
+    }
     let overlay = app.overlay();
     draw_body(frame, body, app, overlay.is_none());
 
@@ -38,6 +66,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
             overlay.draw(frame, body, app);
         }
         None => draw_status(frame, status, app),
+    }
+}
+
+/// One row listing every open buffer; the active one is reversed.
+fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let names = app.buffer_names();
+    let layout = tab_layout(&names);
+    let active = app.active_buffer();
+
+    for (index, (left, width)) in layout.iter().enumerate() {
+        let Some(name) = names.get(index) else {
+            break;
+        };
+        let style = if index == active {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().add_modifier(Modifier::DIM)
+        };
+        let text = format!(" {name} ");
+        frame
+            .buffer_mut()
+            .set_stringn(area.x + left, area.y, &text, usize::from(*width), style);
+        if index + 1 < names.len() {
+            frame.buffer_mut().set_stringn(
+                area.x + left + width,
+                area.y,
+                "\u{2502}",
+                1,
+                Style::default().add_modifier(Modifier::DIM),
+            );
+        }
     }
 }
 
@@ -292,6 +354,22 @@ mod tests {
         assert_eq!(compose_line("abcd", "cd", 6), "abcdcd");
         assert_eq!(compose_line("漢", "", 2), "漢");
         assert_eq!(compose_line("", "x", 0), "");
+    }
+
+    #[test]
+    fn the_buffer_bar_appears_only_with_several_buffers() {
+        let single = App::from_text("uno.txt", "uno\n");
+        let terminal = render_sized(&single, PANEL_WIDTH, 6);
+        assert_eq!(row_of(&terminal, 0, PANEL_WIDTH), "uno");
+
+        let mut app = App::from_text("uno.txt", "uno\n");
+        app.apply(Action::NewBuffer);
+        app.apply(Action::SwitchBuffer(0));
+        let terminal = render_sized(&app, PANEL_WIDTH, 6);
+        let bar = row_of(&terminal, 0, PANEL_WIDTH);
+        assert!(bar.contains("uno.txt"), "{bar:?}");
+        assert!(bar.contains("[No Name]"), "{bar:?}");
+        assert_eq!(row_of(&terminal, 1, PANEL_WIDTH), "uno");
     }
 
     #[test]

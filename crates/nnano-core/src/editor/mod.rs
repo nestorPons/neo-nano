@@ -48,6 +48,14 @@ pub enum Action {
     FindNext,
     /// `M-B`/`Shift+F3`: repeat the last search backwards.
     FindPrevious,
+    /// `^N`/`^T`: open a new empty buffer and make it active.
+    NewBuffer,
+    /// `^T`: same as `NewBuffer`; tabs are buffers in v1.
+    NewTab,
+    /// `^W`: close the active buffer (asks once when dirty).
+    CloseBuffer,
+    /// Switch to another open buffer (palette row, buffer-bar click).
+    SwitchBuffer(usize),
     /// `M-A`: start or clear the mark.
     StartMark,
     /// `^A`: select the whole buffer.
@@ -202,6 +210,10 @@ impl Editor {
             | Action::ToggleBackwards
             | Action::FindNext
             | Action::FindPrevious
+            | Action::NewBuffer
+            | Action::NewTab
+            | Action::CloseBuffer
+            | Action::SwitchBuffer(_)
             | Action::ScrollView(_)
             | Action::PageUp
             | Action::PageDown => {}

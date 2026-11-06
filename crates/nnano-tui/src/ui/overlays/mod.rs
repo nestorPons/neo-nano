@@ -49,7 +49,9 @@ impl Overlay {
             Overlay::Find(_) => {}
             Overlay::Settings(settings) => settings::draw(frame, area, app, settings),
             Overlay::Help => help::draw(frame, area),
-            Overlay::Palette(palette) => palette::draw(frame, area, palette),
+            Overlay::Palette(palette) => {
+                palette::draw(frame, area, palette, &app.buffer_names());
+            }
         }
     }
 }

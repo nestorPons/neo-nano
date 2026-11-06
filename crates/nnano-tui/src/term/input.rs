@@ -46,6 +46,9 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'k' => Some(Action::CutLine),
             'z' => Some(Action::Undo),
             'y' => Some(Action::Redo),
+            'n' => Some(Action::NewBuffer),
+            't' => Some(Action::NewTab),
+            'w' => Some(Action::CloseBuffer),
             _ => None,
         };
     }
@@ -208,9 +211,6 @@ mod tests {
         // inert rather than a silent no-op variant.
         for (code, modifiers) in [
             (KeyCode::Char('o'), KeyModifiers::CONTROL), // open, later phase
-            (KeyCode::Char('n'), KeyModifiers::CONTROL), // new buffer, phase 7
-            (KeyCode::Char('t'), KeyModifiers::CONTROL), // new tab, phase 7
-            (KeyCode::Char('w'), KeyModifiers::CONTROL), // close buffer, phase 7
             (KeyCode::Char('g'), KeyModifiers::ALT),     // goto, later
             (KeyCode::Char('q'), KeyModifiers::ALT),     // not a binding
         ] {
