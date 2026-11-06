@@ -69,7 +69,7 @@ La búsqueda imita a nano: **no es incremental** (se ejecuta al aceptar el promp
 
 | Acción | Tecla | Alternativa |
 |---|---|---|
-| Ayuda | `F1` | — |
+| Ayuda | `Ctrl+H` | `F1` |
 | Menú de configuración | `Alt+,` | — |
 | Paleta de comandos | `Ctrl+P` | — |
 | Alternar resaltado de sintaxis | `Alt+Y` | `Alt+Y` |
@@ -103,3 +103,4 @@ Se conservan sin cambios: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctr
 - Para seleccionar texto nativo del terminal, mantén `Shift` al arrastrar.
 - nnano usa el ratón si la opción `mouse` está activa (por defecto): clic coloca el cursor, arrastrar marca, `Alt`+arrastrar marca un rectángulo y la rueda desplaza sin mover el cursor.
 - Grupos de deshacer: se agrupa por palabra y por una pausa de 400 ms; cortar, pegar, guardar y cambiar de búfer cierran el grupo. «Reemplazar todo» es un solo paso.
+- `Ctrl+H` abre la referencia de atajos. Retroceso es la tecla Backspace del terminal (`0x7F`): si tu terminal envía `0x08` al pulsar Backspace, esa tecla abre la ayuda; configúralo para enviar `0x7F`.

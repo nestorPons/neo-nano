@@ -502,11 +502,20 @@ mod tests {
     #[test]
     fn the_help_panel_draws_and_stays_inside_the_area() {
         let mut app = App::from_text("notes.txt", "");
+        app.body_height = PANEL_HEIGHT - 1;
         app.apply(Action::OpenHelp);
         let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
-        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
-        assert!(screen.contains("Help"), "{screen}");
-        assert!(screen.contains("save in place"), "{screen}");
+        let first = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(first.contains("Help"), "{first}");
+        assert!(first.contains("Save in place"), "{first}");
+
+        // The reference is longer than the screen: End shows the last sections.
+        app.apply(Action::MoveFileEnd);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let end = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(end.contains("Mouse"), "{end}");
+        assert!(end.contains("Esc closes"), "{end}");
+
         // A tiny terminal must not panic or draw outside the frame.
         let _ = render_sized(&app, 8, 3);
     }

@@ -31,7 +31,7 @@ use nnano_core::syntax::{self, Span as SyntaxSpan, SyntaxSet};
 
 use crate::term::Caps;
 use crate::ui::overlays::replace::{Replace, Stage};
-use crate::ui::overlays::{FindSettings, Overlay, Palette, Prompt, Settings};
+use crate::ui::overlays::{FindSettings, Help, Overlay, Palette, Prompt, Settings};
 use crate::ui::viewport::Viewport;
 
 /// Event-poll granularity. It is not a redraw rate: a frame is drawn only when
@@ -309,7 +309,7 @@ impl App {
             Action::OpenReplace => self.overlay = Some(Overlay::Replace(Replace::new(&self.find))),
             Action::OpenPalette => self.overlay = Some(Overlay::Palette(Palette::new())),
             Action::OpenSettings => self.overlay = Some(Overlay::Settings(Settings::new())),
-            Action::OpenHelp => self.overlay = Some(Overlay::Help),
+            Action::OpenHelp => self.overlay = Some(Overlay::Help(Help::new())),
             Action::FindNext => self.repeat_find(Direction::Forward),
             Action::FindPrevious => self.repeat_find(Direction::Backward),
             // `M-B` outside a prompt repeats the search backwards; inside one it
@@ -427,11 +427,45 @@ impl App {
                     self.overlay = Some(Overlay::Settings(settings));
                 }
             },
-            Overlay::Help => match action {
-                Action::Cancel | Action::Newline => {}
-                Action::Quit => self.request_quit(confirming),
-                _ => self.overlay = Some(Overlay::Help),
-            },
+            Overlay::Help(mut help) => {
+                let page = self.help_viewport();
+                let viewport = page;
+                let keep = match action {
+                    Action::Cancel | Action::Newline => false,
+                    Action::MoveUp => {
+                        help.scroll_by(-1, viewport);
+                        true
+                    }
+                    Action::MoveDown => {
+                        help.scroll_by(1, viewport);
+                        true
+                    }
+                    Action::PageUp => {
+                        help.scroll_by(-(page as isize), viewport);
+                        true
+                    }
+                    Action::PageDown => {
+                        help.scroll_by(page as isize, viewport);
+                        true
+                    }
+                    Action::MoveFileStart => {
+                        help.scroll_to(false, viewport);
+                        true
+                    }
+                    Action::MoveFileEnd => {
+                        help.scroll_to(true, viewport);
+                        true
+                    }
+                    Action::Quit => {
+                        self.request_quit(confirming);
+                        false
+                    }
+                    _ => true,
+                };
+                if keep {
+                    self.overlay = Some(Overlay::Help(help));
+                }
+            }
             Overlay::Replace(mut replace) => {
                 let keep = match action {
                     Action::Cancel => false,
@@ -733,6 +767,14 @@ impl App {
         self.redraw = true;
     }
 
+    /// Rows the help panel can show: its height is min(content + 3, body), minus
+    /// the two border rows and the footer.
+    fn help_viewport(&self) -> usize {
+        usize::from(self.body_height.saturating_sub(3))
+            .max(1)
+            .min(crate::ui::overlays::help::content_len())
+    }
+
     fn any_dirty(&self) -> bool {
         self.docs.iter().any(|document| document.editor.is_dirty())
     }
@@ -833,6 +875,7 @@ impl App {
             return format!(" {message}");
         }
         let mut text = format!(" nnano {}", env!("CARGO_PKG_VERSION"));
+        text.push_str("  ^H: help");
         if self.any_dirty() {
             text.push_str("  [Modified]");
         }
@@ -934,6 +977,15 @@ impl App {
                     }
                 }
                 self.overlay = Some(Overlay::Palette(palette));
+            }
+            Overlay::Help(mut help) => {
+                let page = self.help_viewport();
+                match event.kind {
+                    MouseEventKind::ScrollDown => help.scroll_by(3, page),
+                    MouseEventKind::ScrollUp => help.scroll_by(-3, page),
+                    _ => {}
+                }
+                self.overlay = Some(Overlay::Help(help));
             }
             other => self.overlay = Some(other),
         }
@@ -1157,6 +1209,55 @@ mod tests {
             panic!("settings should still be open");
         };
         assert_eq!(settings.selected(), 2);
+    }
+
+    #[test]
+    fn caret_h_opens_the_shortcut_reference() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply(Action::OpenHelp);
+        assert!(matches!(app.overlay(), Some(super::Overlay::Help(_))));
+        app.apply(Action::Cancel);
+        assert!(app.overlay().is_none());
+    }
+
+    #[test]
+    fn the_shortcut_reference_scrolls_and_clamps() {
+        let mut app = App::from_text("s.txt", "");
+        app.body_height = 24;
+        let viewport = 24 - 3;
+        app.apply(Action::OpenHelp);
+        app.apply(Action::PageDown);
+        let Some(super::Overlay::Help(help)) = app.overlay() else {
+            panic!("help should stay open");
+        };
+        assert!(help.scroll() > 0);
+
+        app.apply(Action::MoveFileEnd);
+        let Some(super::Overlay::Help(help)) = app.overlay() else {
+            panic!("help should stay open");
+        };
+        assert_eq!(
+            help.scroll(),
+            super::ui::overlays::help::content_len() - viewport
+        );
+
+        app.apply(Action::MoveFileStart);
+        let Some(super::Overlay::Help(help)) = app.overlay() else {
+            panic!("help should stay open");
+        };
+        assert_eq!(help.scroll(), 0);
+        app.apply(Action::Cancel);
+        assert!(app.overlay().is_none());
+    }
+
+    #[test]
+    fn the_status_bar_advertises_the_help_key() {
+        let app = App::from_text("s.txt", "");
+        assert!(
+            app.status_left().contains("^H: help"),
+            "{}",
+            app.status_left()
+        );
     }
 
     #[test]

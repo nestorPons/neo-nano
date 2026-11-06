@@ -8,6 +8,7 @@ Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simp
 - Not yet: recovery file (2 s debounce), save-as (`M-S`), `^O` open-by-path, justify (`^J`), goto (`^G`/`M-G`), execute (`M-X`), word movement (`Ctrl+←/→`), OSC 52 copy out. `^S` still writes only when the buffer has a path.
 - Undo is an operation log in **char** ranges (the rope indexes by char; storing bytes would need a snap-to-boundary on every line change). Groups close on a 400 ms pause, a word boundary, and hard boundaries (cut, paste, save, buffer switch); "replace all" merges into one group. No undo across runs.
 - Selection is half-open `[anchor, head)` in chars: "select all" is exactly the buffer, and a cursor at a line end selects nothing phantom. Block mode is `M-Z` or Alt+drag; copy is `^C`/`M-6`, cut `^X`, paste `^V`/`^U`, and `^K` cuts whole lines and accumulates.
+- Help is a floating, scrollable reference of every implemented binding (`^H` or `F1`, `↑↓`/`PgUp`/`PgDn`/wheel, `Esc`), and the status bar advertises `^H: help`.
 - Syntax is per line and stateless: earliest rule wins per char, only viewport lines are matched, and a line over 4096 chars is left plain. `start=`/`end=` multi-line rules, `header`, hex colours and unknown names (`pink`, `latte`) degrade instead of failing; the 40 distro grammars in `/usr/share/nano` load without a single warning. `M-Y` toggles the session, `syntax` sets the default.
 - Verified in a real pty (80x24, reconstructed screen): copy/paste round-trips and undoes; typing undoes and redoes; `^N`/`^W` add and close buffers with the bar; `M-R` replaces one match and replaces all; `M-Y` and `--no-syntax` remove the colour codes; a click sets the cursor; the wheel scrolls without moving the cursor and the next key re-attaches the view; a bracketed paste is one undo step; the settings overlay turns the mouse off at runtime; no grammar warning reaches stderr.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
@@ -115,8 +116,8 @@ Desktop wins every collision; non-colliding nano bindings are kept. No legacy pr
 | `^N` | New buffer | Next Line | dropped (arrows) |
 | `^P` | Command palette | Prev Line | dropped (arrows) |
 | `^T` | New tab | Execute command | moved to `M-X` |
-| `^G` | Go To Line | Help | moved to `F1` |
-| `^H` | Backspace alias (not an action of its own) | Replace | never bound to Replace; `^\` + `M-R` cover it |
+| `^G` | Go To Line | Help | moved to `F1` / `^H` |
+| `^H` | Help — the whole shortcut reference | Replace | Replace stays on `^\` + `M-R`; Backspace is the terminal's Backspace key (`0x7F`), decided 2026-11-06 |
 
 Kept unchanged (no collision): `^K` cut line, `^U` paste alias, `^E` end of line, `^D` delete char, `^J` justify, `^L` refresh, `^B` back char, `^\` replace, `M-U`/`M-E` undo/redo, `M-A` mark, `M-6` copy, `M-G` goto, `M-\`/`M-/` first/last line, `M-W` find next, `M-B` find backwards, `M-C` case toggle, `M-R` regexp toggle, `M-Y` syntax highlighting toggle.
 `^K` + `^U` are the pair worth defending: they are nano's identity and collide with nothing.
@@ -127,7 +128,7 @@ Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` /
 
 User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
 
-Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^\`, `M-Y`, and the editing block: `^A`, `^C`, `^V`/`^U`, `^X`, `^K`, `^Z`, `^Y`, `M-A`, `M-6`, `M-U`, `M-E`, `M-Z`, `^N`, `^T`, `^W`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands.
+Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace`/`^?`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `^H`/`F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^\`, `M-Y`, and the editing block: `^A`, `^C`, `^V`/`^U`, `^X`, `^K`, `^Z`, `^Y`, `M-A`, `M-6`, `M-U`, `M-E`, `M-Z`, `^N`, `^T`, `^W`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands.
 
 `M-C`, `M-R` and `M-B` are modal by interpretation: they decode everywhere, the find/replace prompt acts on them, and outside a prompt `M-R` opens Replace and `M-B` repeats the search backwards. `Enter` (`Newline`) confirms inside a prompt or a panel; `Esc` (`Cancel`) closes an overlay and clears the mark.
 
@@ -136,7 +137,7 @@ Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/
 Terminal constraints that gate the table (verify at startup, never assume):
 - Disable flow control and `ISIG` so `^S`, `^Q`, `^C`, `^Z` reach the app as keys, not XOFF/SIGINT/SIGTSTP.
 - `Enter`=`^M`, `Tab`=`^I`, `Backspace`=`^H`/`^?`, `Esc`=`^[` are unassignable.
-- `^H` is **Backspace, never Replace** (decided 2026-11-05): Linux console and some `TERM`s send `^H` for backspace, so leaving it unbound would break backspace there. `input.rs` maps both `^H` and `^?` to `Action::Backspace`; nano's `^H`-adjacent binding does not survive.
+- `^H` opens the shortcut reference (decided 2026-11-06, replaces the 2026-11-05 "Backspace alias"), and `F1` is the same overlay. Backspace is the terminal's Backspace key (`0x7F`); `input.rs` maps `KeyCode::Backspace` to `Action::Backspace`. A terminal that sends `0x08` for Backspace (some consoles) will open help on that key; `AGENTS.md`, `docs/*/shortcuts.md` and `LOG.md` record the trade-off, and no other binding uses `^H`.
 - `^B` is tmux's default prefix, `^A` is screen's; document, don't fight.
 - `Ctrl+Shift+<letter>` is unreliable on legacy terminals — do not promise `^Shift+Z`.
 - macOS: `Cmd+*` never arrives; `M-` is Option and may emit accented characters.

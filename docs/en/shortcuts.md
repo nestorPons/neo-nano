@@ -69,7 +69,7 @@ Search mirrors nano: it is **not incremental** (it runs when you accept the prom
 
 | Action | Key | Alternative |
 |---|---|---|
-| Help | `F1` | — |
+| Help | `Ctrl+H` | `F1` |
 | Settings menu | `Alt+,` | — |
 | Command palette | `Ctrl+P` | — |
 | Toggle syntax highlighting | `Alt+Y` | `Alt+Y` |
@@ -103,3 +103,4 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - To select text with the terminal natively, hold `Shift` while dragging.
 - nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, and the wheel scrolls without moving the cursor.
 - Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. "Replace all" is one undo step.
+- `Ctrl+H` opens the shortcut reference. Backspace is the terminal's Backspace key (`0x7F`): if your terminal sends `0x08` for Backspace, that key opens help — set it to send `0x7F`.

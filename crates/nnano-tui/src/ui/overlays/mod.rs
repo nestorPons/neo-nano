@@ -16,6 +16,7 @@ pub mod replace;
 pub mod settings;
 
 pub use find::FindSettings;
+pub use help::Help;
 pub use palette::Palette;
 pub use prompt::Prompt;
 pub use replace::Replace;
@@ -34,7 +35,7 @@ pub enum Overlay {
     /// [`FindSettings`].
     Find(Prompt),
     Settings(Settings),
-    Help,
+    Help(Help),
     Palette(Palette),
     /// Replace prompts and the per-match question; drawn on the status row.
     Replace(Replace),
@@ -52,7 +53,7 @@ impl Overlay {
         match self {
             Overlay::Find(_) | Overlay::Replace(_) => {}
             Overlay::Settings(settings) => settings::draw(frame, area, app, settings),
-            Overlay::Help => help::draw(frame, area),
+            Overlay::Help(help) => help::draw(frame, area, help),
             Overlay::Palette(palette) => {
                 palette::draw(frame, area, palette, &app.buffer_names());
             }

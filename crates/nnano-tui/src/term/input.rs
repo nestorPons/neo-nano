@@ -10,8 +10,9 @@
 //! toggle the direction inside one), and `M-R` toggles regexp inside a prompt
 //! while outside it opens Replace.
 //!
-//! `^H` is Backspace, never Replace: Linux console and some `TERM`s send `^H` for
-//! backspace, so it is accepted both as `KeyCode::Backspace` and as Ctrl+H.
+//! `^H` opens the help reference; Backspace is the Backspace key (0x7F). A
+//! terminal that sends 0x08 for Backspace therefore opens help instead of
+//! deleting, which is documented in `AGENTS.md` and `docs/*/shortcuts.md`.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nnano_core::editor::Action;
@@ -32,7 +33,10 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
         return match raw.to_ascii_lowercase() {
             'q' => Some(Action::Quit),
             's' => Some(Action::Save),
-            'h' => Some(Action::Backspace),
+            // `^H` opens the shortcut reference (user decision 2026-11-06).
+            // Backspace is the Backspace key (0x7F); a terminal that sends 0x08
+            // for it will open help, which is documented.
+            'h' => Some(Action::OpenHelp),
             'e' => Some(Action::MoveLineEnd),
             'b' => Some(Action::MoveLeft),
             'd' => Some(Action::Delete),
@@ -197,16 +201,18 @@ mod tests {
     }
 
     #[test]
-    fn caret_h_is_backspace_not_replace() {
+    fn caret_h_opens_help_and_the_backspace_key_still_deletes() {
         assert_eq!(
             decode(&key(KeyCode::Char('h'), KeyModifiers::CONTROL)),
-            Some(Action::Backspace)
+            Some(Action::OpenHelp)
         );
         // Shift+Ctrl+H arrives upper-cased on some terminals.
         assert_eq!(
             decode(&key(KeyCode::Char('H'), KeyModifiers::CONTROL)),
-            Some(Action::Backspace)
+            Some(Action::OpenHelp)
         );
+        // The Backspace key (0x7F) is the delete path now.
+        assert_eq!(decode(&plain(KeyCode::Backspace)), Some(Action::Backspace));
     }
 
     #[test]
