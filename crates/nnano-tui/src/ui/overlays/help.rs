@@ -28,10 +28,13 @@ const HELP: &[&str] = &[
     "Search",
     "  ^F find, Enter accepts, Esc closes",
     "  M-W / F3 next, M-B / Shift+F3 previous",
+    "  ^\\ replace, M-R opens it too (M-R toggles regexp in a prompt)",
     "  in the prompt: M-C case, M-R regexp, M-B direction",
     "",
     "Interface",
     "  ^P commands",
+    "  M-Y syntax highlighting",
+    "  M-Z rectangular mark (Alt+drag too)",
     "  M-, settings",
     "  F1 help",
 ];

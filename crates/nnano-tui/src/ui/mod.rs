@@ -9,6 +9,7 @@
 //! reflows because an overlay opened.
 
 pub mod overlays;
+pub mod style;
 pub mod text;
 pub mod viewport;
 
@@ -60,6 +61,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match overlay {
         Some(Overlay::Find(prompt)) => {
             overlays::find::draw_prompt(frame, status, app.find_settings(), prompt);
+        }
+        Some(Overlay::Replace(replace)) => {
+            overlays::replace::draw_status(frame, status, replace);
         }
         Some(overlay) => {
             draw_status(frame, status, app);
@@ -126,6 +130,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
             usize::from(area.width),
             Style::default(),
         );
+        draw_syntax(frame, area, app, line, row);
     }
 
     if let Some(selection) = app.selection() {
@@ -148,8 +153,40 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
     }
 }
 
-/// Reverse video over the marked cells, block or stream. Applied after the text so
-/// it wins over syntax colours (which land in phase 7).
+/// Colour the highlighted spans of one line. Only viewport lines reach here, and a
+/// line longer than the core cap yields no spans at all.
+fn draw_syntax(frame: &mut Frame, area: Rect, app: &App, line: usize, row: u16) {
+    let spans = app.syntax_spans(line);
+    if spans.is_empty() {
+        return;
+    }
+    let buffer = app.editor().buffer();
+    let tab_width = app.tab_width();
+    let left_col = app.viewport().left_col;
+    let width = usize::from(area.width);
+
+    for span in spans {
+        let start = text::char_column(buffer, line, span.start, tab_width).saturating_sub(left_col);
+        let end = text::char_column(buffer, line, span.end, tab_width).saturating_sub(left_col);
+        let left = start.min(width);
+        let right = end.min(width);
+        if right <= left {
+            continue;
+        }
+        frame.buffer_mut().set_style(
+            Rect::new(
+                area.x + u16::try_from(left).unwrap_or(0),
+                area.y + row,
+                u16::try_from(right - left).unwrap_or(u16::MAX),
+                1,
+            ),
+            style::span_style(&span.style),
+        );
+    }
+}
+
+/// Reverse video over the marked cells, block or stream. Applied after the text and
+/// after the syntax colours, so the mark always wins.
 fn draw_selection(frame: &mut Frame, area: Rect, app: &App, selection: &Selection) {
     let viewport = app.viewport();
     let buffer = app.editor().buffer();
@@ -354,6 +391,36 @@ mod tests {
         assert_eq!(compose_line("abcd", "cd", 6), "abcdcd");
         assert_eq!(compose_line("漢", "", 2), "漢");
         assert_eq!(compose_line("", "x", 0), "");
+    }
+
+    fn rust_syntax() -> nnano_core::syntax::SyntaxSet {
+        nnano_core::syntax::SyntaxSet::from_grammars(nnano_core::syntax::parse(
+            "syntax \"rust\" \"\\\\.rs$\"\ncolor red \"fn\"\n",
+        ))
+    }
+
+    #[test]
+    fn syntax_colours_reach_the_cells() {
+        let mut app = App::from_text("main.rs", "fn x\n");
+        app.apply_syntax(rust_syntax());
+        let terminal = render(&app);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].fg, ratatui::style::Color::Red);
+        assert_eq!(buffer[(1, 0)].fg, ratatui::style::Color::Red);
+        assert_eq!(buffer[(3, 0)].fg, ratatui::style::Color::Reset);
+    }
+
+    #[test]
+    fn the_mark_wins_over_syntax_colour() {
+        let mut app = App::from_text("main.rs", "fn x\n");
+        app.apply_syntax(rust_syntax());
+        app.set_cursor(0, 0);
+        app.apply(Action::StartMark);
+        app.apply(Action::MoveRight);
+        app.apply(Action::MoveRight);
+        let terminal = render(&app);
+        let modifier = terminal.backend().buffer()[(0, 0)].modifier;
+        assert!(modifier.contains(ratatui::style::Modifier::REVERSED));
     }
 
     #[test]

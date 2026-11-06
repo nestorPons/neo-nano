@@ -3,13 +3,13 @@
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
 ## Status (2026-11-06)
-- **Phase 5 done** (2026-11-06): option registry + layered config (CLI/TOML/system/`.nanorc`), search (literal + `regex-lite` ERE, per line, wrap), find prompt, settings overlay, command palette, help overlay. Keys: `^F`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^P`, `M-,`, `F1`, `Esc`.
-- Registry rows today: `tab_size` (`--tabsize`/`-T`, `set tabsize`, `tab_size`) and `case_sensitive` (`--casesensitive`/`-C`, `--no-casesensitive`, `set casesensitive`, `case_sensitive`). Both are real: tab width drives the renderer, cursor and vertical goal column; case sensitivity is the find default. A row is added only when its behaviour exists.
-- Overlays are not a second key path: keys still decode to one `Action`, a prompt consumes the text-editing ones, and `App` interprets the rest per overlay. `M-B` is modal by interpretation, not by decoder (`M-` backwards everywhere).
-- Settings edits the live session only; nothing is written to `config.toml` (the commented template stays "on demand").
-- The palette lists commands today; the buffer list joins it with tabs (phase 7). It still never walks the filesystem.
-- Not yet: recovery file, save-as (`M-S`), `^O` open-by-path, undo/redo, replace, tabs, syntax highlighting, mouse.
-- Verified in a real pty (80x24, reconstructed screen): config file `tab_size = 4` reaches the status bar; `--tabsize 3` beats it; an unknown key warns on stderr without aborting; `^F` + pattern + Enter jumps to the match; `M-W` wraps and reports it; the prompt flags show `[Case]`/`[Regexp]`/`[Backwards]`; `^P` filters and runs Settings; `M-,` changes the tab width live; `F1` opens help; `Esc` closes every overlay; `^H` is backspace; a dirty `^Q` asks once and a second press exits 0.
+- **Phases 6 and 7 done** (2026-11-06): mouse (click, drag, Alt+drag rectangle, wheel, `mouse` option), bracketed paste, internal clipboard with stream and rectangular selection, grouped undo/redo, replace with per-match confirmation, multiple buffers with a one-row buffer bar, and syntax highlighting from `.nanorc` grammars.
+- Registry rows: `tab_size`, `case_sensitive`, `mouse`, `syntax` — each wired to the CLI, TOML, `.nanorc` and the settings overlay by the same table.
+- Not yet: recovery file (2 s debounce), save-as (`M-S`), `^O` open-by-path, justify (`^J`), goto (`^G`/`M-G`), execute (`M-X`), word movement (`Ctrl+←/→`), OSC 52 copy out. `^S` still writes only when the buffer has a path.
+- Undo is an operation log in **char** ranges (the rope indexes by char; storing bytes would need a snap-to-boundary on every line change). Groups close on a 400 ms pause, a word boundary, and hard boundaries (cut, paste, save, buffer switch); "replace all" merges into one group. No undo across runs.
+- Selection is half-open `[anchor, head)` in chars: "select all" is exactly the buffer, and a cursor at a line end selects nothing phantom. Block mode is `M-Z` or Alt+drag; copy is `^C`/`M-6`, cut `^X`, paste `^V`/`^U`, and `^K` cuts whole lines and accumulates.
+- Syntax is per line and stateless: earliest rule wins per char, only viewport lines are matched, and a line over 4096 chars is left plain. `start=`/`end=` multi-line rules, `header`, hex colours and unknown names (`pink`, `latte`) degrade instead of failing; the 40 distro grammars in `/usr/share/nano` load without a single warning. `M-Y` toggles the session, `syntax` sets the default.
+- Verified in a real pty (80x24, reconstructed screen): copy/paste round-trips and undoes; typing undoes and redoes; `^N`/`^W` add and close buffers with the bar; `M-R` replaces one match and replaces all; `M-Y` and `--no-syntax` remove the colour codes; a click sets the cursor; the wheel scrolls without moving the cursor and the next key re-attaches the view; a bracketed paste is one undo step; the settings overlay turns the mouse off at runtime; no grammar warning reaches stderr.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -127,11 +127,11 @@ Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` /
 
 User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
 
-Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 6–7).
+Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^\`, `M-Y`, and the editing block: `^A`, `^C`, `^V`/`^U`, `^X`, `^K`, `^Z`, `^Y`, `M-A`, `M-6`, `M-U`, `M-E`, `M-Z`, `^N`, `^T`, `^W`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands.
 
-`M-C`, `M-R` and `M-B` are modal by interpretation: they decode everywhere and only the find prompt acts on the first two; `M-B` repeats backwards outside a prompt and toggles the direction inside one. `Enter` (`Newline`) confirms inside a prompt or in a panel.
+`M-C`, `M-R` and `M-B` are modal by interpretation: they decode everywhere, the find/replace prompt acts on them, and outside a prompt `M-R` opens Replace and `M-B` repeats the search backwards. `Enter` (`Newline`) confirms inside a prompt or a panel; `Esc` (`Cancel`) closes an overlay and clears the mark.
 
-`^Q` on a dirty buffer asks once: the status bar shows *unsaved changes: `^Q` again to quit, `^S` to save* and any other key cancels the pending quit. A real dialog replaces this in phase 5.
+`^Q` on a dirty buffer asks once: the status bar shows *unsaved changes: `^Q` again to quit, `^S` to save* and any other key cancels the pending quit. `^W` on a dirty buffer asks the same way before closing it.
 
 Terminal constraints that gate the table (verify at startup, never assume):
 - Disable flow control and `ISIG` so `^S`, `^Q`, `^C`, `^Z` reach the app as keys, not XOFF/SIGINT/SIGTSTP.
@@ -268,7 +268,7 @@ poll(16ms) -> drain events -> apply Action -> if dirty: draw -> diff
 - Cursor as `(line, char offset)` resolved through the rope's cached newline index; visual column derived via `unicode-width`. *Clarified 2026-11-05*: the offset is stored in chars, not bytes — ropey indexes lines by char, and a stored byte offset would need snapping back to a char boundary on every line change (O(line) on a 5 MB single line). `TextBuffer::char_to_byte` converts at the save/render edges. The invariant that matters is unchanged: **no visual column is ever stored**.
 - Line breaks are ropey's Unicode set (`\n`, `\r`, `\r\n`, VT, FF, NEL, LS, PS), so a lone `\r` splits lines like `\n` does. `line_len`/`line_text` strip the terminator; **save must re-emit each line's own terminator**, never assume `\n` (phase 4).
 - Display width is accumulated by one `buffer::Width` used by both the cursor and the renderer, so a cursor cannot drift from the glyphs under it: tab stops (8 until the registry exists), `unicode-width` per char, zero cells for ZWJ/VS16/skin-tone continuations and combining marks.
-- Undo as an operation log of byte ranges (not text snapshots) to bound memory.
+- Undo as an operation log of char ranges (not text snapshots) to bound memory. The written decision said "byte ranges"; chars are what ropey indexes, so the log stores chars and never stores a visual column.
 - The viewport reads ranges from the rope; never keep a parallel `Vec<Line>` mirror.
 - Required tests: CJK/emoji widths, tabs, `\r\n`, CRLF save preservation, 5 MB single line, 1M-line file.
 
@@ -347,8 +347,8 @@ That test is what enforces "dual configuration".
 3. `input.rs` complete against the keymap table; table-driven tests.
 4. Open/save in place (no `file~` backup) / dirty / quit-confirmation; `nnano -` stdin buffer.
 5. **Done (2026-11-06).** Overlays: settings (config mirror), command palette, find (nano prompt semantics), help; option registry and layered config behind them.
-6. Mouse: selection, scroll, menu clicks; bracketed paste; rectangular selection.
-7. Undo/redo (grouped), replace, tabs, syntax highlighting (nano `.nanorc` model); keep `docs/{en,es,zh-Hans,ja}/shortcuts.md` in sync.
+6. **Done (2026-11-06).** Mouse: selection, scroll, panel row clicks; bracketed paste; rectangular selection.
+7. **Done (2026-11-06).** Undo/redo (grouped), replace, tabs (buffers), syntax highlighting (nano `.nanorc` model); `docs/{en,es,zh-Hans,ja}/shortcuts.md` updated with `M-Z` and the mouse/undo notes.
 
 ### Open items
 

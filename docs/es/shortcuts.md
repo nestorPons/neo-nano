@@ -32,6 +32,7 @@ La columna *Alternativa* es el binding heredado de nano, cuando existe.
 | Seleccionar todo | `Ctrl+A` | — |
 | Marcar para seleccionar | `Alt+A` | `Alt+A` |
 | Copiar texto marcado | `Alt+6` | `Alt+6` |
+| Marca rectangular | `Alt+Z` | — |
 | Borrar carácter | `Ctrl+D` | — |
 | Reemplazar | `Ctrl+\` | `Alt+R` |
 | Justificar párrafo | `Ctrl+J` | — |
@@ -100,3 +101,5 @@ Se conservan sin cambios: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctr
 - `Ctrl+B` es el prefijo por defecto de tmux; `Ctrl+A`, el de screen.
 - `Ctrl+Shift+letra` no es fiable en terminales antiguos: no hay atajo de rehacer con `Ctrl+Shift+Z`.
 - Para seleccionar texto nativo del terminal, mantén `Shift` al arrastrar.
+- nnano usa el ratón si la opción `mouse` está activa (por defecto): clic coloca el cursor, arrastrar marca, `Alt`+arrastrar marca un rectángulo y la rueda desplaza sin mover el cursor.
+- Grupos de deshacer: se agrupa por palabra y por una pausa de 400 ms; cortar, pegar, guardar y cambiar de búfer cierran el grupo. «Reemplazar todo» es un solo paso.

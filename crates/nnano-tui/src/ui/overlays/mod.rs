@@ -12,11 +12,13 @@ pub mod find;
 pub mod help;
 pub mod palette;
 pub mod prompt;
+pub mod replace;
 pub mod settings;
 
 pub use find::FindSettings;
 pub use palette::Palette;
 pub use prompt::Prompt;
+pub use replace::Replace;
 pub use settings::Settings;
 
 use ratatui::Frame;
@@ -34,19 +36,21 @@ pub enum Overlay {
     Settings(Settings),
     Help,
     Palette(Palette),
+    /// Replace prompts and the per-match question; drawn on the status row.
+    Replace(Replace),
 }
 
 impl Overlay {
     /// True for overlays that take over the status row instead of floating.
     pub fn is_prompt(&self) -> bool {
-        matches!(self, Overlay::Find(_))
+        matches!(self, Overlay::Find(_) | Overlay::Replace(_))
     }
 
     /// Draw the floating panels. The find prompt is drawn by the status row and
     /// is a no-op here.
     pub fn draw(&self, frame: &mut Frame, area: Rect, app: &App) {
         match self {
-            Overlay::Find(_) => {}
+            Overlay::Find(_) | Overlay::Replace(_) => {}
             Overlay::Settings(settings) => settings::draw(frame, area, app, settings),
             Overlay::Help => help::draw(frame, area),
             Overlay::Palette(palette) => {

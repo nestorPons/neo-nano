@@ -169,6 +169,33 @@ impl History {
         Some(cursor)
     }
 
+    /// Merge the newest `count` groups into one, so "replace all" undoes in one
+    /// step instead of once per instance.
+    pub fn merge_last(&mut self, count: usize) {
+        self.close();
+        if count < 2 {
+            return;
+        }
+        let take = count.min(self.done.len());
+        if take < 2 {
+            return;
+        }
+        let groups: Vec<Group> = self.done.split_off(self.done.len() - take);
+        let cursor_before = groups.first().map(|group| group.cursor_before);
+        let cursor_after = groups.last().map(|group| group.cursor_after);
+        let mut edits = Vec::new();
+        for group in groups {
+            edits.extend(group.edits);
+        }
+        if let (Some(cursor_before), Some(cursor_after)) = (cursor_before, cursor_after) {
+            self.done.push(Group {
+                edits,
+                cursor_before,
+                cursor_after,
+            });
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         self.open.is_some() || !self.done.is_empty()
     }

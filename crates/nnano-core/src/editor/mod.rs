@@ -56,12 +56,16 @@ pub enum Action {
     CloseBuffer,
     /// Switch to another open buffer (palette row, buffer-bar click).
     SwitchBuffer(usize),
+    /// `M-R` / `^\\`: open the replace prompts.
+    OpenReplace,
     /// `M-A`: start or clear the mark.
     StartMark,
     /// `^A`: select the whole buffer.
     SelectAll,
     /// `M-Z`: make the mark rectangular (or the next one, if there is none).
     ToggleBlockSelection,
+    /// `M-Y`: turn syntax highlighting off or on for this session.
+    ToggleSyntax,
     /// `^C` / `M-6`: copy the marked region, or the current line.
     Copy,
     /// `^X`: cut the marked region, or the current line.
@@ -204,6 +208,7 @@ impl Editor {
             | Action::OpenPalette
             | Action::OpenSettings
             | Action::OpenHelp
+            | Action::OpenReplace
             | Action::Cancel
             | Action::ToggleCase
             | Action::ToggleRegexp
@@ -214,6 +219,7 @@ impl Editor {
             | Action::NewTab
             | Action::CloseBuffer
             | Action::SwitchBuffer(_)
+            | Action::ToggleSyntax
             | Action::ScrollView(_)
             | Action::PageUp
             | Action::PageDown => {}
@@ -316,6 +322,39 @@ impl Editor {
 
     pub fn can_redo(&self) -> bool {
         self.history.can_redo()
+    }
+
+    /// Replace a char range in one undo group; used by the replace overlay.
+    /// Returns whether anything changed.
+    pub fn replace_range(&mut self, start: usize, end: usize, text: &str) -> bool {
+        let start = start.min(self.buffer.len_chars());
+        let end = end.clamp(start, self.buffer.len_chars());
+        let removed: String = (start..end)
+            .filter_map(|index| self.buffer.char_at(index))
+            .collect();
+        if removed.is_empty() && text.is_empty() {
+            return false;
+        }
+        let before = self.cursor;
+        if !removed.is_empty() {
+            self.buffer.remove(start..end);
+        }
+        self.buffer.insert_str(start, text);
+        let (line, col) = self.buffer.char_to_position(start + text.chars().count());
+        self.cursor = Cursor::new(line, col);
+        self.selection = None;
+        self.touch();
+        self.history.record_group(
+            vec![Edit::replace(start, removed, text)],
+            before,
+            self.cursor,
+        );
+        true
+    }
+
+    /// Merge the newest `count` undo groups (replace-all is one step).
+    pub fn merge_undo_groups(&mut self, count: usize) {
+        self.history.merge_last(count);
     }
 
     pub fn clear_selection(&mut self) {
@@ -1003,6 +1042,28 @@ mod tests {
         assert_eq!(plain(&editor), "uno\ndos");
         editor.apply(Action::Undo);
         assert_eq!(plain(&editor), "");
+    }
+
+    #[test]
+    fn replace_range_is_one_undoable_edit() {
+        let mut editor = editor("uno dos uno");
+        assert!(editor.replace_range(0, 3, "X"));
+        assert_eq!(plain(&editor), "X dos uno");
+        assert_eq!(at(&editor), (0, 1));
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "uno dos uno");
+    }
+
+    #[test]
+    fn merging_groups_makes_replace_all_one_undo_step() {
+        let mut editor = editor("a a a");
+        editor.replace_range(0, 1, "b");
+        editor.replace_range(2, 3, "b");
+        editor.replace_range(4, 5, "b");
+        assert_eq!(plain(&editor), "b b b");
+        editor.merge_undo_groups(3);
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "a a a");
     }
 
     #[test]

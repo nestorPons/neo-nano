@@ -27,8 +27,10 @@ use nnano_core::buffer::{
 use nnano_core::config::{Config, Opt};
 use nnano_core::editor::{Action, Editor};
 use nnano_core::search::{Direction, Search};
+use nnano_core::syntax::{self, Span as SyntaxSpan, SyntaxSet};
 
 use crate::term::Caps;
+use crate::ui::overlays::replace::{Replace, Stage};
 use crate::ui::overlays::{FindSettings, Overlay, Palette, Prompt, Settings};
 use crate::ui::viewport::Viewport;
 
@@ -45,6 +47,8 @@ pub struct Document {
     /// seekable and therefore cannot be saved in place.
     path: Option<PathBuf>,
     encoding: Encoding,
+    /// Grammar selected by the file name, from the loaded set.
+    grammar: Option<String>,
     editor: Editor,
     viewport: Viewport,
 }
@@ -55,6 +59,7 @@ impl Document {
             file: label(name),
             path: None,
             encoding: Encoding::Utf8,
+            grammar: None,
             editor: Editor::new(),
             viewport: Viewport::default(),
         }
@@ -113,6 +118,13 @@ pub struct App {
     /// Last known terminal size, so a mouse event can be mapped without asking
     /// the terminal again.
     screen: (u16, u16),
+    /// Grammars loaded from the syntax directories.
+    syntax: SyntaxSet,
+    /// Session toggle behind `M-Y` and the `syntax` option.
+    syntax_enabled: bool,
+    /// Whether the next frame must scroll to keep the cursor visible. The wheel
+    /// turns it off so scrolling the view does not get undone by the cursor.
+    follow_cursor: bool,
 }
 
 impl App {
@@ -142,6 +154,9 @@ impl App {
             overlay: None,
             find: FindSettings::default(),
             screen: (0, 0),
+            syntax: SyntaxSet::new(),
+            syntax_enabled: true,
+            follow_cursor: true,
         };
         app.sync_editors();
         app
@@ -176,11 +191,45 @@ impl App {
         Ok(app)
     }
 
-    /// Adopt the merged configuration: the `tab_size` every buffer uses.
+    /// Adopt the merged configuration: the `tab_size` every buffer uses and the
+    /// default for syntax highlighting.
     pub fn apply_config(&mut self, config: Config) {
         self.find.case_sensitive = config.bool(Opt::CaseSensitive);
+        self.syntax_enabled = config.bool(Opt::Syntax);
         self.config = config;
         self.sync_editors();
+    }
+
+    /// Adopt the loaded grammars and resolve each open buffer's grammar by name.
+    pub fn apply_syntax(&mut self, syntax: SyntaxSet) {
+        self.syntax = syntax;
+        for document in &mut self.docs {
+            document.grammar = self
+                .syntax
+                .select(&document.file)
+                .map(|grammar| grammar.name.clone());
+        }
+    }
+
+    /// Spans for one line of the active buffer, or nothing when highlighting is
+    /// off, the buffer has no grammar, or the line is beyond the cost cap.
+    pub(crate) fn syntax_spans(&self, line: usize) -> Vec<SyntaxSpan> {
+        if !self.syntax_enabled {
+            return Vec::new();
+        }
+        let Some(grammar) = self
+            .document()
+            .grammar
+            .as_deref()
+            .and_then(|name| self.syntax.get(name))
+        else {
+            return Vec::new();
+        };
+        if self.editor().buffer().line_len(line) > syntax::MAX_LINE {
+            return Vec::new();
+        }
+        let text = self.editor().buffer().line_text(line);
+        grammar.highlight(&text, syntax::MAX_LINE)
     }
 
     /// Run until the user quits. The `Session` guard restores the terminal on
@@ -206,7 +255,9 @@ impl App {
                 self.screen = (size.width, size.height);
                 let (_, body, _) = ui::areas(self.screen_rect(), self.buffer_count());
                 self.body_height = body.height;
-                ui::ensure_cursor_visible(&mut self, body.width, body.height);
+                if self.follow_cursor {
+                    ui::ensure_cursor_visible(&mut self, body.width, body.height);
+                }
                 session.terminal().draw(|frame| ui::draw(frame, &self))?;
                 self.redraw = false;
             }
@@ -238,6 +289,9 @@ impl App {
         let confirming_quit = std::mem::take(&mut self.confirm_quit);
         let confirming_close = std::mem::take(&mut self.confirm_close);
         self.message = None;
+        // Any key or click re-attaches the view to the cursor; the wheel is the
+        // one action that scrolls without it.
+        self.follow_cursor = !matches!(action, Action::ScrollView(_));
 
         if self.overlay.is_some() {
             self.apply_overlay(action, confirming_quit);
@@ -252,6 +306,7 @@ impl App {
             Action::CloseBuffer => self.close_buffer(confirming_close),
             Action::SwitchBuffer(index) => self.switch_to(index),
             Action::OpenFind => self.overlay = Some(Overlay::Find(self.find.open())),
+            Action::OpenReplace => self.overlay = Some(Overlay::Replace(Replace::new(&self.find))),
             Action::OpenPalette => self.overlay = Some(Overlay::Palette(Palette::new())),
             Action::OpenSettings => self.overlay = Some(Overlay::Settings(Settings::new())),
             Action::OpenHelp => self.overlay = Some(Overlay::Help),
@@ -260,9 +315,16 @@ impl App {
             // `M-B` outside a prompt repeats the search backwards; inside one it
             // toggles the direction (handled by the overlay).
             Action::ToggleBackwards => self.repeat_find(Direction::Backward),
-            // `M-C`/`M-R` only mean something in a prompt.
+            // `M-C` only means something in a prompt; `M-R` outside one is nano's
+            // Replace binding, inside one it toggles regexp.
             Action::Cancel => self.editor_mut().clear_selection(),
-            Action::ToggleCase | Action::ToggleRegexp => {}
+            Action::ToggleCase => {}
+            Action::ToggleRegexp => self.overlay = Some(Overlay::Replace(Replace::new(&self.find))),
+            Action::ToggleSyntax => {
+                self.syntax_enabled = !self.syntax_enabled;
+                let state = if self.syntax_enabled { "on" } else { "off" };
+                self.inform(format!("syntax highlighting {state}"));
+            }
             Action::ScrollView(delta) => self.scroll(delta),
             // Pages are the only actions that need viewport geometry.
             Action::PageUp => {
@@ -288,6 +350,11 @@ impl App {
         }
         if let Some(Overlay::Palette(palette)) = &mut self.overlay
             && palette.edit(action.clone())
+        {
+            return;
+        }
+        if let Some(Overlay::Replace(replace)) = &mut self.overlay
+            && replace.edits(&action)
         {
             return;
         }
@@ -365,7 +432,166 @@ impl App {
                 Action::Quit => self.request_quit(confirming),
                 _ => self.overlay = Some(Overlay::Help),
             },
+            Overlay::Replace(mut replace) => {
+                let keep = match action {
+                    Action::Cancel => false,
+                    Action::Newline => self.replace_accept(&mut replace),
+                    Action::ToggleCase => {
+                        replace.case_sensitive = !replace.case_sensitive;
+                        true
+                    }
+                    Action::ToggleRegexp => {
+                        replace.regexp = !replace.regexp;
+                        true
+                    }
+                    Action::Insert(ch) if replace.stage() == Stage::Confirm => match ch {
+                        'y' => self.replace_current(&mut replace),
+                        'n' => self.replace_skip(&mut replace),
+                        'a' => self.replace_all(&mut replace),
+                        'q' => false,
+                        _ => true,
+                    },
+                    Action::Quit => {
+                        self.request_quit(confirming);
+                        false
+                    }
+                    _ => true,
+                };
+                if keep {
+                    self.overlay = Some(Overlay::Replace(replace));
+                }
+            }
         }
+    }
+
+    /// Replace flow, stage by stage. Each helper returns whether the overlay stays
+    /// open; `self.overlay` is `None` while they run, so they can mutate the editor.
+    fn replace_accept(&mut self, replace: &mut Replace) -> bool {
+        match replace.stage() {
+            Stage::Search => {
+                let query = replace.search_text().to_string();
+                if query.is_empty() {
+                    self.inform("empty search pattern");
+                    return true;
+                }
+                if let Err(err) = Search::compile(&query, replace.regexp, replace.case_sensitive) {
+                    self.inform(format!("invalid pattern: {err}"));
+                    return true;
+                }
+                self.find.query = query;
+                self.find.case_sensitive = replace.case_sensitive;
+                self.find.regexp = replace.regexp;
+                replace.set_stage(Stage::Replacement);
+                true
+            }
+            Stage::Replacement => {
+                self.find.replace_with = replace.replacement_text().to_string();
+                replace.set_stage(Stage::Confirm);
+                let from = self.cursor_index();
+                self.replace_seek(replace, from, false)
+            }
+            // Enter in the confirm stage means "yes, replace this one".
+            Stage::Confirm => self.replace_current(replace),
+        }
+    }
+
+    /// Find the next match at or after `from` and jump to it. `stop_on_wrap` ends
+    /// the run when the search has come round the end of the buffer, so skipping or
+    /// replacing the last match does not find it again forever.
+    fn replace_seek(&mut self, replace: &mut Replace, from: usize, stop_on_wrap: bool) -> bool {
+        let search = match Search::compile(&self.find.query, replace.regexp, replace.case_sensitive)
+        {
+            Ok(search) => search,
+            Err(err) => {
+                self.inform(format!("invalid pattern: {err}"));
+                return false;
+            }
+        };
+        match search.find(self.editor().buffer(), from, Direction::Forward) {
+            Some(hit) if hit.wrapped && stop_on_wrap => {
+                self.finish_replace(replace);
+                false
+            }
+            Some(hit) => {
+                replace.set_active(Some((hit.start, hit.end)));
+                let (line, col) = self.editor().buffer().char_to_position(hit.start);
+                self.editor_mut().set_cursor(line, col);
+                true
+            }
+            None => {
+                self.finish_replace(replace);
+                false
+            }
+        }
+    }
+
+    /// End of a replace run: report the count, or that nothing matched.
+    fn finish_replace(&mut self, replace: &Replace) {
+        match replace.replaced() {
+            0 => {
+                let query = self.find.query.clone();
+                self.inform(format!("not found: {query}"));
+            }
+            count => self.inform(format!("replaced {count}")),
+        }
+    }
+
+    /// Replace the active match, then look for the next one.
+    fn replace_current(&mut self, replace: &mut Replace) -> bool {
+        let Some((start, end)) = replace.active() else {
+            let from = self.cursor_index();
+            return self.replace_seek(replace, from, false);
+        };
+        let with = self.find.replace_with.clone();
+        self.editor_mut().replace_range(start, end, &with);
+        replace.note_replaced();
+        let next = end + with.chars().count();
+        self.replace_seek(replace, next, true)
+    }
+
+    /// Skip the active match.
+    fn replace_skip(&mut self, replace: &mut Replace) -> bool {
+        let from = replace
+            .active()
+            .map_or_else(|| self.cursor_index(), |(_, end)| end);
+        replace.set_active(None);
+        self.replace_seek(replace, from, true)
+    }
+
+    /// Replace every match in one pass, then close. The whole run is one undo step.
+    fn replace_all(&mut self, replace: &mut Replace) -> bool {
+        let with = self.find.replace_with.clone();
+        let search = match Search::compile(&self.find.query, replace.regexp, replace.case_sensitive)
+        {
+            Ok(search) => search,
+            Err(err) => {
+                self.inform(format!("invalid pattern: {err}"));
+                return false;
+            }
+        };
+        let mut from = 0;
+        let mut count = 0;
+        for _ in 0..100_000 {
+            let Some(hit) = search.find(self.editor().buffer(), from, Direction::Forward) else {
+                break;
+            };
+            if hit.wrapped {
+                break;
+            }
+            if self.editor_mut().replace_range(hit.start, hit.end, &with) {
+                count += 1;
+            }
+            let width = with.chars().count();
+            from = hit.start + width.max(usize::from(width == 0 && hit.end > hit.start));
+            if from <= hit.start {
+                from = hit.start + 1;
+            }
+        }
+        self.editor_mut().merge_undo_groups(count);
+        replace.set_active(None);
+        let total = replace.replaced() + count;
+        self.inform(format!("replaced {total}"));
+        false
     }
 
     /// `^Q`: quit, or ask once when any buffer has unsaved changes.
@@ -399,6 +625,7 @@ impl App {
         self.docs.push(Document::empty(""));
         self.active = self.docs.len() - 1;
         self.sync_editors();
+        self.document_mut().grammar = None;
     }
 
     /// `^W`: close the active buffer, asking once when it is dirty. Closing the
@@ -796,9 +1023,10 @@ fn page_step(body_height: u16) -> isize {
 
 /// Entry point used by the `nnano` binary: read args, then run with the merged
 /// configuration the binary resolved from the environment.
-pub fn run(file: Option<String>, config: Config) -> io::Result<()> {
+pub fn run(file: Option<String>, config: Config, syntax: SyntaxSet) -> io::Result<()> {
     let mut app = App::open(file)?;
     app.apply_config(config);
+    app.apply_syntax(syntax);
     app.run()
 }
 #[cfg(test)]
@@ -1227,6 +1455,7 @@ mod tests {
     fn escape_closes_every_overlay() {
         for open in [
             Action::OpenFind,
+            Action::OpenReplace,
             Action::OpenPalette,
             Action::OpenSettings,
             Action::OpenHelp,
@@ -1248,6 +1477,106 @@ mod tests {
         assert_eq!(app.editor().tab_width(), 9);
         app.apply(Action::MoveLeft);
         assert_eq!(app.tab_width(), 8);
+    }
+
+    fn syntax_set() -> nnano_core::syntax::SyntaxSet {
+        nnano_core::syntax::SyntaxSet::from_grammars(nnano_core::syntax::parse(
+            "syntax \"rust\" \"\\\\.rs$\"\ncolor red \"fn\"\ncolor green \"[0-9]+\"\n",
+        ))
+    }
+
+    #[test]
+    fn the_grammar_follows_the_file_name() {
+        let mut app = App::from_text("main.rs", "fn 42");
+        app.apply_syntax(syntax_set());
+        let spans = app.syntax_spans(0);
+        assert_eq!(spans.len(), 2, "{spans:?}");
+
+        let mut other = App::from_text("notes.txt", "fn 42");
+        other.apply_syntax(syntax_set());
+        assert!(other.syntax_spans(0).is_empty(), "no grammar for .txt");
+    }
+
+    #[test]
+    fn m_y_turns_highlighting_off_for_the_session() {
+        let mut app = App::from_text("main.rs", "fn 42");
+        app.apply_syntax(syntax_set());
+        assert!(!app.syntax_spans(0).is_empty());
+        app.apply(Action::ToggleSyntax);
+        assert!(app.syntax_spans(0).is_empty());
+        assert!(app.message().unwrap().contains("off"));
+        app.apply(Action::ToggleSyntax);
+        assert!(!app.syntax_spans(0).is_empty());
+    }
+
+    #[test]
+    fn the_syntax_option_sets_the_default() {
+        let mut app = App::from_text("main.rs", "fn 42");
+        app.apply_syntax(syntax_set());
+        app.apply_config(config(&[(Opt::Syntax, Value::Bool(false))]));
+        assert!(app.syntax_spans(0).is_empty());
+    }
+
+    fn open_replace(app: &mut App, search: &str, replacement: &str) {
+        app.apply(Action::OpenReplace);
+        for ch in search.chars() {
+            app.apply(Action::Insert(ch));
+        }
+        app.apply(Action::Newline);
+        for ch in replacement.chars() {
+            app.apply(Action::Insert(ch));
+        }
+        app.apply(Action::Newline);
+    }
+
+    #[test]
+    fn replace_replaces_one_match_and_then_skips() {
+        let mut app = App::from_text("s.txt", "uno dos uno\n");
+        open_replace(&mut app, "uno", "X");
+        assert_eq!(app.message(), None);
+        // The first match is in front of the cursor.
+        app.apply(Action::Insert('y'));
+        assert_eq!(app.editor().buffer().line_text(0), "X dos uno");
+        app.apply(Action::Insert('n'));
+        assert!(app.overlay().is_none(), "no more matches");
+    }
+
+    #[test]
+    fn replace_all_is_one_undo_step() {
+        let mut app = App::from_text("s.txt", "uno dos uno\n");
+        open_replace(&mut app, "uno", "X");
+        app.apply(Action::Insert('a'));
+        assert!(app.overlay().is_none());
+        assert_eq!(app.editor().buffer().line_text(0), "X dos X");
+        assert!(app.message().unwrap().contains("replaced 2"));
+
+        app.apply(Action::Undo);
+        assert_eq!(app.editor().buffer().line_text(0), "uno dos uno");
+    }
+
+    #[test]
+    fn replace_can_be_cancelled_at_each_stage() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply(Action::OpenReplace);
+        app.apply(Action::Cancel);
+        assert!(app.overlay().is_none());
+
+        open_replace(&mut app, "uno", "X");
+        app.apply(Action::Insert('q'));
+        assert!(app.overlay().is_none());
+        assert_eq!(app.editor().buffer().line_text(0), "uno");
+    }
+
+    #[test]
+    fn an_invalid_replacement_pattern_keeps_the_prompt_open() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply(Action::OpenReplace);
+        app.apply(Action::ToggleRegexp);
+        app.apply(Action::Insert('a'));
+        app.apply(Action::Insert('('));
+        app.apply(Action::Newline);
+        assert!(app.overlay().is_some());
+        assert!(app.message().unwrap().contains("invalid pattern"));
     }
 
     #[test]

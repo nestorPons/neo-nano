@@ -18,14 +18,14 @@ Referencia rápida de lo creado y de las decisiones tomadas. Documento de consul
 | # | Sección | Contenido |
 |---|---|---|
 | 1 | Archivo | guardar, guardar como, abrir, recargar, insertar, búfer, pestaña, salir |
-| 2 | Edición | deshacer, cortar/copiar/pegar, marcar, borrar, reemplazar |
+| 2 | Edición | deshacer, cortar/copiar/pegar, marcar (normal y rectangular), borrar, reemplazar |
 | 3 | Navegación | ir a línea, inicio/fin, primera/última, palabras, páginas |
 | 4 | Búsqueda | buscar, siguiente, anterior, mayúsculas, regexp (prompt) |
 | 5 | Interfaz | ayuda, ajustes, paleta, resaltado, refrescar |
 | 6 | Cambios vs nano | migración tecla antigua → tecla nueva |
-| 7 | Límites del terminal | XON/XOFF, teclas no reasignables, prefijos, `Ctrl+Shift`, selección |
+| 7 | Límites del terminal | XON/XOFF, teclas no reasignables, prefijos, `Ctrl+Shift`, ratón, grupos de deshacer |
 
-Extensión: 102 líneas por archivo, 408 en total.
+Extensión: 105 líneas por archivo, 420 en total.
 
 ## 3. Convenciones
 
@@ -45,6 +45,8 @@ Extensión: 102 líneas por archivo, 408 en total.
 | Aviso de que `Ctrl+Shift+Z` no existe | muchos terminales no lo envían; evita documentar un rehacer irreal |
 | Sección de límites del terminal | el fallo más probable al probar es `Ctrl+S`/`Ctrl+Q` comidos por el flujo XON/XOFF |
 | Nota de selección con `Shift` | el ratón capturado rompe la selección nativa del terminal |
+| `Alt+Z` marca rectangular | no había tecla decidida para el modo bloque; `Alt+6` copia la marca tal cual |
+| Ratón y grupos de deshacer documentados | la captura de ratón y la granularidad de undo son decisiones de producto, no detalles internos |
 
 ## 5. Sincronización
 
@@ -54,5 +56,4 @@ Extensión: 102 líneas por archivo, 408 en total.
 ## 6. Pendientes
 
 - No hay índices `README.md` en `docs/en`, `docs/zh-Hans` ni `docs/ja`.
-- El andamiaje del crate sigue **sin aprobar** (sin `Cargo.toml`, sin TUI stack, sin git).
-- `DECISIONS.md` existe y está vacío: decidir si se usa como índice de ADRs o se elimina.
+- Las capturas/ejemplos visuales de los overlays no están documentadas todavía; el estado real vive en `AGENTS.md` y `LOG.md`.

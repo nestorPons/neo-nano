@@ -19,7 +19,15 @@ fn main() -> ExitCode {
         eprintln!("nnano: {warning}");
     }
 
-    match nnano_tui::run(file, config) {
+    // Distro grammars are inherited from nano (/usr/share/nano), so a system with
+    // nano installed highlights without any nnano setup.
+    let (syntax, syntax_warnings) =
+        nnano_core::syntax::SyntaxSet::load(&nnano_core::syntax::detect_dirs());
+    for warning in syntax_warnings {
+        eprintln!("nnano: {warning}");
+    }
+
+    match nnano_tui::run(file, config, syntax) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("nnano: {err}");

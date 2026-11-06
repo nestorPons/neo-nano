@@ -32,6 +32,7 @@ The *Alternative* column is the inherited nano binding, where one exists.
 | Select all | `Ctrl+A` | — |
 | Start marking | `Alt+A` | `Alt+A` |
 | Copy marked text | `Alt+6` | `Alt+6` |
+| Rectangular mark | `Alt+Z` | — |
 | Delete character | `Ctrl+D` | — |
 | Replace | `Ctrl+\` | `Alt+R` |
 | Justify paragraph | `Ctrl+J` | — |
@@ -100,3 +101,5 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - `Ctrl+B` is tmux's default prefix; `Ctrl+A` is screen's.
 - `Ctrl+Shift+<letter>` is unreliable on legacy terminals: there is no `Ctrl+Shift+Z` redo.
 - To select text with the terminal natively, hold `Shift` while dragging.
+- nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, and the wheel scrolls without moving the cursor.
+- Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. "Replace all" is one undo step.

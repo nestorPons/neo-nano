@@ -5,6 +5,12 @@
 //! register lands with `^K`/`^U` in phase 7.
 
 use nnano_core::editor::Action;
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::Paragraph;
+
+use crate::ui::compose_line;
 
 /// Text plus a char-offset cursor.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -107,6 +113,20 @@ impl Prompt {
 /// but wide glyphs and combining marks do.
 pub fn prompt_width(text: &str) -> usize {
     nnano_core::buffer::line_visual_column(text.chars(), 1)
+}
+
+/// One reversed row: `label` + text on the left, flags on the right, cursor in
+/// the text. Find and both replace prompts share it.
+pub fn draw_prompt_row(frame: &mut Frame, area: Rect, label: &str, prompt: &Prompt, flags: &str) {
+    let style = Style::default().add_modifier(Modifier::REVERSED);
+    let left = format!("{label}{}", prompt.text());
+    let line = compose_line(&left, flags, area.width);
+    frame.render_widget(Paragraph::new(line).style(style), area);
+
+    let offset = prompt_width(label) + prompt_width(prompt.before());
+    let limit = usize::from(area.width).saturating_sub(1);
+    let x = area.x + u16::try_from(offset.min(limit)).unwrap_or(0);
+    frame.set_cursor_position((x, area.y));
 }
 
 #[cfg(test)]

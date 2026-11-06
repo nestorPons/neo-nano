@@ -30,6 +30,7 @@ pub enum Opt {
     TabSize,
     CaseSensitive,
     Mouse,
+    Syntax,
 }
 
 /// Type of an option's value, with its bounds. Drives clap, TOML coercion, the
@@ -160,6 +161,18 @@ pub const OPTIONS: &[OptRow] = &[
         help: "Make searches match case by default",
     },
     OptRow {
+        id: Opt::Syntax,
+        key: "syntax",
+        long: "syntax",
+        short: None,
+        kind: Kind::Bool,
+        default: Value::Bool(true),
+        nanorc: Some("syntax"),
+        group: "Editor",
+        label: "Syntax highlighting",
+        help: "Colour lines with the grammar of the file's extension",
+    },
+    OptRow {
         id: Opt::Mouse,
         key: "mouse",
         long: "mouse",
@@ -176,7 +189,7 @@ pub const OPTIONS: &[OptRow] = &[
 /// Every variant, for the drift test. A new variant breaks the exhaustive
 /// `match` in `tests::every_variant_is_listed` before it can be forgotten here.
 #[cfg(test)]
-const ALL_OPTS: &[Opt] = &[Opt::TabSize, Opt::CaseSensitive, Opt::Mouse];
+const ALL_OPTS: &[Opt] = &[Opt::TabSize, Opt::CaseSensitive, Opt::Mouse, Opt::Syntax];
 
 /// The row that declares `id`.
 pub fn row(id: Opt) -> &'static OptRow {
@@ -369,11 +382,11 @@ mod tests {
         // without adding it to ALL_OPTS stops this file from building.
         for id in ALL_OPTS {
             match *id {
-                Opt::TabSize | Opt::CaseSensitive | Opt::Mouse => {}
+                Opt::TabSize | Opt::CaseSensitive | Opt::Mouse | Opt::Syntax => {}
             }
         }
         // Hand-maintained count: extend it together with ALL_OPTS.
-        assert_eq!(ALL_OPTS.len(), 3);
+        assert_eq!(ALL_OPTS.len(), 4);
     }
 
     #[test]

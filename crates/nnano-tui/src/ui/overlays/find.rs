@@ -12,17 +12,16 @@ use nnano_core::config::Opt;
 use nnano_core::search::Direction;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::Paragraph;
 
-use super::prompt::{Prompt, prompt_width};
-use crate::ui::compose_line;
+use super::prompt::{Prompt, draw_prompt_row};
 
 /// Session state of the last search: nano reopens the prompt with the previous
 /// pattern and keeps the toggles.
 #[derive(Debug, Clone, Default)]
 pub struct FindSettings {
     pub query: String,
+    /// Last replacement, so the replace prompt reopens where it left off.
+    pub replace_with: String,
     pub case_sensitive: bool,
     pub regexp: bool,
     pub backwards: bool,
@@ -72,13 +71,5 @@ pub fn draw_prompt(frame: &mut Frame, area: Rect, settings: &FindSettings, promp
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let style = Style::default().add_modifier(Modifier::REVERSED);
-    let left = format!(" Find: {}", prompt.text());
-    let line = compose_line(&left, &settings.flags(), area.width);
-    frame.render_widget(Paragraph::new(line).style(style), area);
-
-    let offset = prompt_width(" Find: ") + prompt_width(prompt.before());
-    let limit = usize::from(area.width).saturating_sub(1);
-    let x = area.x + u16::try_from(offset.min(limit)).unwrap_or(0);
-    frame.set_cursor_position((x, area.y));
+    draw_prompt_row(frame, area, " Find: ", prompt, &settings.flags());
 }

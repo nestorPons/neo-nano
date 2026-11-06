@@ -7,8 +7,8 @@
 //!
 //! Keys that are modal in nano decode to one `Action` and are interpreted by the
 //! focus: `M-B` is "backwards" everywhere (repeat the search outside a prompt,
-//! toggle the direction inside one), `M-C`/`M-R` only have a meaning in the find
-//! prompt, and outside it they are ignored until Replace lands.
+//! toggle the direction inside one), and `M-R` toggles regexp inside a prompt
+//! while outside it opens Replace.
 //!
 //! `^H` is Backspace, never Replace: Linux console and some `TERM`s send `^H` for
 //! backspace, so it is accepted both as `KeyCode::Backspace` and as Ctrl+H.
@@ -46,6 +46,7 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'k' => Some(Action::CutLine),
             'z' => Some(Action::Undo),
             'y' => Some(Action::Redo),
+            '\\' => Some(Action::OpenReplace),
             'n' => Some(Action::NewBuffer),
             't' => Some(Action::NewTab),
             'w' => Some(Action::CloseBuffer),
@@ -61,13 +62,16 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'w' => Some(Action::FindNext),
             'b' => Some(Action::ToggleBackwards),
             'c' => Some(Action::ToggleCase),
-            'r' => Some(Action::ToggleRegexp),
             ',' => Some(Action::OpenSettings),
             'a' => Some(Action::StartMark),
             '6' => Some(Action::Copy),
+            // Modal, like `M-B`: the find prompt toggles regexp, the editor opens
+            // Replace. One action, interpreted by the focus.
+            'r' => Some(Action::ToggleRegexp),
             'z' => Some(Action::ToggleBlockSelection),
             'u' => Some(Action::Undo),
             'e' => Some(Action::Redo),
+            'y' => Some(Action::ToggleSyntax),
             _ => None,
         };
     }

@@ -40,12 +40,20 @@ pub const COMMANDS: &[Command] = &[
         action: Action::FindPrevious,
     },
     Command {
+        label: "Replace",
+        action: Action::OpenReplace,
+    },
+    Command {
         label: "New buffer",
         action: Action::NewBuffer,
     },
     Command {
         label: "Close buffer",
         action: Action::CloseBuffer,
+    },
+    Command {
+        label: "Toggle syntax",
+        action: Action::ToggleSyntax,
     },
     Command {
         label: "Settings",
