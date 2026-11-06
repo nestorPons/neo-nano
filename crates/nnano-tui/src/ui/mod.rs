@@ -3,7 +3,12 @@
 //! Only the visible window is read from the rope: `text::visible_line` builds one
 //! line at a time, and nothing keeps a `Vec<Line>` mirror of the buffer. Drawing
 //! never decides *when* to redraw; the app loop does.
+//!
+//! The find prompt replaces the status row (nano's bottom line); settings, the
+//! palette and help are floating panels over the text area, so the text never
+//! reflows because an overlay opened.
 
+pub mod overlays;
 pub mod text;
 pub mod viewport;
 
@@ -14,17 +19,30 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
 
 use crate::App;
+use crate::ui::overlays::Overlay;
 
-/// Draw a whole frame: text area above, one-row status bar below.
+/// Draw a whole frame: text area above, one-row status bar below, plus whatever
+/// overlay currently owns the keys.
 pub fn draw(frame: &mut Frame, app: &App) {
     let [body, status] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    draw_body(frame, body, app);
-    draw_status(frame, status, app);
+    let overlay = app.overlay();
+    draw_body(frame, body, app, overlay.is_none());
+
+    match overlay {
+        Some(Overlay::Find(prompt)) => {
+            overlays::find::draw_prompt(frame, status, app.find_settings(), prompt);
+        }
+        Some(overlay) => {
+            draw_status(frame, status, app);
+            overlay.draw(frame, body, app);
+        }
+        None => draw_status(frame, status, app),
+    }
 }
 
-/// Text area plus the terminal cursor.
-fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
+/// Text area, plus the terminal cursor only when the editor owns it.
+fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -48,6 +66,9 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
 
+    if !show_cursor {
+        return;
+    }
     let cursor = app.editor().cursor();
     let row = cursor.line().saturating_sub(viewport.top_line);
     let col = cursor
@@ -77,9 +98,13 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
 /// Width is measured cell-wise, not by `chars().count()`, so CJK file names do
 /// not overlap the title.
 fn status_text(app: &App, width: u16) -> String {
+    compose_line(&app.status_left(), &app.status_right(), width)
+}
+
+/// Left text wins the left side, right text is kept whole when it fits, and the
+/// result is exactly `width` cells. Shared by the status bar and the find prompt.
+pub(crate) fn compose_line(left: &str, right: &str, width: u16) -> String {
     let width = usize::from(width);
-    let left = app.status_left();
-    let right = app.status_right();
     let left_width = line_visual_column(left.chars(), 1);
     let right_width = line_visual_column(right.chars(), 1);
 
@@ -113,30 +138,49 @@ mod tests {
 
     use nnano_core::editor::Action;
 
-    use super::{draw, ensure_cursor_visible, status_text};
+    use super::{compose_line, draw, ensure_cursor_visible, status_text};
     use crate::App;
 
     const WIDTH: u16 = 24;
     const HEIGHT: u16 = 5;
+    /// Floating panels need room for a border and their rows.
+    const PANEL_WIDTH: u16 = 60;
+    const PANEL_HEIGHT: u16 = 20;
 
     fn render(app: &App) -> Terminal<TestBackend> {
-        let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).unwrap();
+        render_sized(app, WIDTH, HEIGHT)
+    }
+
+    fn render_sized(app: &App, width: u16, height: u16) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal
     }
 
     fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        row_of(terminal, y, WIDTH)
+    }
+
+    fn row_of(terminal: &Terminal<TestBackend>, y: u16, width: u16) -> String {
         terminal
             .backend()
             .buffer()
             .content()
             .iter()
-            .skip(usize::from(y) * usize::from(WIDTH))
-            .take(usize::from(WIDTH))
+            .skip(usize::from(y) * usize::from(width))
+            .take(usize::from(width))
             .map(|cell| cell.symbol())
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    /// Whole screen as text, for "this panel is on screen" assertions.
+    fn screen(terminal: &Terminal<TestBackend>, width: u16, height: u16) -> String {
+        (0..height)
+            .map(|y| row_of(terminal, y, width))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -200,5 +244,61 @@ mod tests {
         app.set_cursor(0, 60);
         ensure_cursor_visible(&mut app, WIDTH, HEIGHT - 1);
         assert!(app.viewport().left_col > 0);
+    }
+
+    #[test]
+    fn compose_line_pads_clips_and_measures_cells() {
+        assert_eq!(compose_line("ab", "cd", 7), "ab   cd");
+        assert_eq!(compose_line("abcd", "cd", 6), "abcdcd");
+        assert_eq!(compose_line("漢", "", 2), "漢");
+        assert_eq!(compose_line("", "x", 0), "");
+    }
+
+    #[test]
+    fn the_find_prompt_takes_over_the_status_row() {
+        let mut app = App::from_text("notes.txt", "uno\ndos\n");
+        app.apply(Action::OpenFind);
+        for ch in "dos".chars() {
+            app.apply(Action::Insert(ch));
+        }
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let status = row_of(&terminal, PANEL_HEIGHT - 1, PANEL_WIDTH);
+        assert!(status.contains("Find: dos"), "{status:?}");
+        assert!(!status.contains("nnano"), "{status:?}");
+    }
+
+    #[test]
+    fn the_settings_panel_lists_registry_rows() {
+        let mut app = App::from_text("notes.txt", "");
+        app.apply(Action::OpenSettings);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(screen.contains("Settings"), "{screen}");
+        assert!(screen.contains("Tab size"), "{screen}");
+        assert!(screen.contains("Case-sensitive search"), "{screen}");
+        assert!(screen.contains('8'), "{screen}");
+    }
+
+    #[test]
+    fn the_palette_panel_draws_its_filter_and_commands() {
+        let mut app = App::from_text("notes.txt", "");
+        app.apply(Action::OpenPalette);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(screen.contains("Commands"), "{screen}");
+        assert!(screen.contains("Save file"), "{screen}");
+        assert!(screen.contains("Settings"), "{screen}");
+    }
+
+    #[test]
+    fn the_help_panel_draws_and_stays_inside_the_area() {
+        let mut app = App::from_text("notes.txt", "");
+        app.apply(Action::OpenHelp);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(screen.contains("Help"), "{screen}");
+        assert!(screen.contains("save in place"), "{screen}");
+        // A tiny terminal must not panic or draw outside the frame.
+        let _ = render_sized(&app, 8, 3);
     }
 }

@@ -4,9 +4,10 @@
 //! all produce it, so no surface can drift. [`Editor`] owns the buffer and the
 //! cursor and applies those actions; it has no idea a terminal exists.
 //!
-//! Phase 3 covers typing, deletion and movement. Cut/paste (`^K`/`^U`), justify,
-//! replace, goto and undo keep their own phases and are absent from `Action` until
-//! they exist — no silent no-op variants.
+//! Phase 3 covers typing, deletion and movement; phase 5 adds the overlay and
+//! search actions. Cut/paste (`^K`/`^U`), justify, replace, goto and undo keep
+//! their own phases and are absent from `Action` until they exist — no silent
+//! no-op variants.
 
 use crate::buffer::{Cursor, DEFAULT_TAB_WIDTH, TextBuffer, char_offset_for_column};
 
@@ -19,6 +20,26 @@ pub enum Action {
     Save,
     /// `^L` or a resize: force a repaint, change nothing.
     Redraw,
+    /// `^F`: open the find prompt.
+    OpenFind,
+    /// `^P`: open the command palette.
+    OpenPalette,
+    /// `M-,`: open the settings overlay.
+    OpenSettings,
+    /// `F1`: open the help overlay.
+    OpenHelp,
+    /// `Esc`: close the overlay, or cancel a pending confirmation.
+    Cancel,
+    /// `M-C` inside the find prompt: toggle case sensitivity.
+    ToggleCase,
+    /// `M-R` inside the find prompt: toggle regexp mode.
+    ToggleRegexp,
+    /// `M-B` inside the find prompt: toggle the search direction.
+    ToggleBackwards,
+    /// `M-W`/`F3`: repeat the last search forwards.
+    FindNext,
+    /// `M-B`/`Shift+F3`: repeat the last search backwards.
+    FindPrevious,
     Insert(char),
     InsertTab,
     Newline,
@@ -39,7 +60,7 @@ pub enum Action {
 }
 
 /// Buffer + cursor + undo state (undo arrives in phase 7).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Editor {
     buffer: TextBuffer,
     cursor: Cursor,
@@ -48,6 +69,21 @@ pub struct Editor {
     /// horizontal move.
     goal_col: Option<usize>,
     dirty: bool,
+    /// `tab_size` from the registry, kept here so vertical movement and the goal
+    /// column use the same arithmetic as the renderer.
+    tab_width: usize,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            buffer: TextBuffer::new(),
+            cursor: Cursor::default(),
+            goal_col: None,
+            dirty: false,
+            tab_width: DEFAULT_TAB_WIDTH,
+        }
+    }
 }
 
 impl Editor {
@@ -60,6 +96,16 @@ impl Editor {
             buffer: TextBuffer::from_text(text),
             ..Self::default()
         }
+    }
+
+    /// Follow the `tab_size` option. The caller re-renders; nothing here is
+    /// cached against the old width beyond the next vertical move.
+    pub fn set_tab_width(&mut self, tab_width: usize) {
+        self.tab_width = tab_width.max(1);
+    }
+
+    pub fn tab_width(&self) -> usize {
+        self.tab_width
     }
 
     pub fn buffer(&self) -> &TextBuffer {
@@ -90,8 +136,23 @@ impl Editor {
     pub fn apply(&mut self, action: Action) {
         match action {
             // `Quit`/`Save` are owned by the app loop (it has the path and the
-            // file), and pages need a viewport height.
-            Action::Quit | Action::Save | Action::Redraw | Action::PageUp | Action::PageDown => {}
+            // file), pages need a viewport height, and the rest are overlay or
+            // search actions owned by `App`.
+            Action::Quit
+            | Action::Save
+            | Action::Redraw
+            | Action::OpenFind
+            | Action::OpenPalette
+            | Action::OpenSettings
+            | Action::OpenHelp
+            | Action::Cancel
+            | Action::ToggleCase
+            | Action::ToggleRegexp
+            | Action::ToggleBackwards
+            | Action::FindNext
+            | Action::FindPrevious
+            | Action::PageUp
+            | Action::PageDown => {}
             Action::Insert(ch) => {
                 let mut utf8 = [0; 4];
                 let text = ch.encode_utf8(&mut utf8);
@@ -129,7 +190,7 @@ impl Editor {
     /// Move `delta` lines, keeping the wanted visual column. Public because the
     /// app loop resolves `PageUp`/`PageDown` with the viewport height.
     pub fn move_vertical(&mut self, delta: isize) {
-        let tab_width = DEFAULT_TAB_WIDTH;
+        let tab_width = self.tab_width;
         let goal = self
             .goal_col
             .unwrap_or_else(|| self.cursor.visual_column(&self.buffer, tab_width));

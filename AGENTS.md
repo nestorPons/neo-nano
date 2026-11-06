@@ -2,12 +2,14 @@
 
 Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simple, fast, easy, comfortable** — and adds today's TUI expectations. Not a fork of GNU nano's C codebase.
 
-## Status (2026-11-05)
-- **Phase 4 done** (2026-11-05): in-place `^S` (truncate → write → flush, no temp file, no `file~`), encoding detection with Latin-1 byte-identical round-trip and UTF-16 refused, quit confirmation on a dirty buffer, `nnano -` stdin buffer, and a one-line status message channel (saved / failed / confirm / Latin-1 warning).
-- Not yet: recovery file, save-as (`M-S`) and `^O` open-by-path (both need a prompt), undo, search, syntax. `^S` on an unnamed or stdin buffer says so instead of writing.
-- No fsync after write: a crash right after `^S` can lose the write; the recovery file is the only net (still pending).
-- `nnano-core` stubs still empty: `config/`, `search.rs`, `syntax.rs`; no option registry, no undo.
-- Verified in a real pty: edit + `^S` writes and clears `[Modified]`; a dirty `^Q` waits for a second press and writes nothing; Latin-1 file loads with a warning and round-trips byte-identically; `nnano -` renders piped stdin with keys still coming from `/dev/tty`; UTF-16 exits 1 with a clear message.
+## Status (2026-11-06)
+- **Phase 5 done** (2026-11-06): option registry + layered config (CLI/TOML/system/`.nanorc`), search (literal + `regex-lite` ERE, per line, wrap), find prompt, settings overlay, command palette, help overlay. Keys: `^F`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^P`, `M-,`, `F1`, `Esc`.
+- Registry rows today: `tab_size` (`--tabsize`/`-T`, `set tabsize`, `tab_size`) and `case_sensitive` (`--casesensitive`/`-C`, `--no-casesensitive`, `set casesensitive`, `case_sensitive`). Both are real: tab width drives the renderer, cursor and vertical goal column; case sensitivity is the find default. A row is added only when its behaviour exists.
+- Overlays are not a second key path: keys still decode to one `Action`, a prompt consumes the text-editing ones, and `App` interprets the rest per overlay. `M-B` is modal by interpretation, not by decoder (`M-` backwards everywhere).
+- Settings edits the live session only; nothing is written to `config.toml` (the commented template stays "on demand").
+- The palette lists commands today; the buffer list joins it with tabs (phase 7). It still never walks the filesystem.
+- Not yet: recovery file, save-as (`M-S`), `^O` open-by-path, undo/redo, replace, tabs, syntax highlighting, mouse.
+- Verified in a real pty (80x24, reconstructed screen): config file `tab_size = 4` reaches the status bar; `--tabsize 3` beats it; an unknown key warns on stderr without aborting; `^F` + pattern + Enter jumps to the match; `M-W` wraps and reports it; the prompt flags show `[Case]`/`[Regexp]`/`[Backwards]`; `^P` filters and runs Settings; `M-,` changes the tab width live; `F1` opens help; `Esc` closes every overlay; `^H` is backspace; a dirty `^Q` asks once and a second press exits 0.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -30,7 +32,7 @@ Reading rule: where this section is silent, the recommendation is adopted as the
 | Syntax highlighting | **in** — nano's model | `.nanorc` `syntax`/`color`, per line, stateless |
 | Search | **in** — nano's model | literal default, runs on `Enter`, not incremental |
 | Split view | **no** | one viewport for the whole app |
-| File tree / browser | **no** | palette over open buffers instead |
+| File tree / browser | **no** | command palette; it lists open buffers once tabs exist, and never the filesystem |
 | Multiple cursors | **no** | one cursor, one selection |
 | Rectangular selection | yes | range + mode flag; cheap on a rope |
 | Undo granularity | grouped | ~400 ms pause + hard boundaries |
@@ -79,7 +81,7 @@ Each row that becomes an option costs one registry row, one overlay widget and f
 
 - One editor pane. `App` holds a single viewport; do **not** pre-design `Vec<Pane>` "for later". Tabs already go through the per-buffer rope, which is the whole point.
 - No tree, no browser, no sidebar in v1.
-- File access: `^O` open-by-path with completion, and the palette over **open buffers** only — it does not walk the filesystem (permissions, symlinks, `.gitignore`, cost on huge trees).
+- File access: `^O` open-by-path with completion, and the palette over **open buffers** only — it does not walk the filesystem (permissions, symlinks, `.gitignore`, cost on huge trees). Until tabs land the palette lists commands plus nothing else; the buffer rows are a phase-7 addition, not a new surface.
 - Rationale: nano's ethos is "the shell launched me on a file". A tree re-imports the IDE model and a persistent UI region the keymap and layout never budget for.
 
 ### Other adopted defaults (2026-11-04)
@@ -125,7 +127,9 @@ Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` /
 
 User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
 
-Implemented rows (2026-11-05): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 5–7).
+Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace` incl. `^H`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands (phases 6–7).
+
+`M-C`, `M-R` and `M-B` are modal by interpretation: they decode everywhere and only the find prompt acts on the first two; `M-B` repeats backwards outside a prompt and toggles the direction inside one. `Enter` (`Newline`) confirms inside a prompt or in a panel.
 
 `^Q` on a dirty buffer asks once: the status bar shows *unsaved changes: `^Q` again to quit, `^S` to save* and any other key cancels the pending quit. A real dialog replaces this in phase 5.
 
@@ -211,7 +215,8 @@ crossterm = "=0.29.0"
 
 # nnano/Cargo.toml (binary)
 clap = { version = "=4.6.7", default-features = false,
-         features = ["std", "help", "usage", "error-context", "suggestions"] }
+         features = ["std", "help", "usage", "error-context", "suggestions",
+                     "string"] }
 
 # workspace dev-dependencies
 insta = "=1.49.0"
@@ -221,11 +226,11 @@ insta = "=1.49.0"
 
 - Each crate declares only what it uses; nothing is inherited implicitly.
 - No `serde` derive for config: the TOML file is parsed into `toml::Table` and validated against the option registry at runtime (see *Option registry*). `toml` stays for parsing and span-aware errors; add `serde` only if a non-config format (e.g. the recovery file) needs typed (de)serialization.
-- `clap` is used as a **builder** only: the `derive` feature is not enabled and must not be re-added. Flags come from the option registry, not from a struct.
+- `clap` is used as a **builder** only: the `derive` feature is not enabled and must not be re-added. Flags come from the option registry, not from a struct. The `string` feature is on (2026-11-06) because the registry builds flag ids and long names at runtime; without it clap only accepts `&'static str`.
 - Ratatui is pre-1.0 and modularized in 0.30: pin exact versions, keep `Cargo.lock`.
 - No `widget-calendar` feature (unused weight). No async runtime, LSP or plugins until a real requirement appears.
 
-### Layout by crate (approved 2026-11-04; not created yet)
+### Layout by crate (approved 2026-11-04; created, phase 5)
 
 ```text
 crates/
@@ -235,11 +240,12 @@ crates/
     editor/         nano operations (^K/^U, justify, replace, goto)
     search.rs       nano search semantics (literal + ERE, wrap, case)
     syntax.rs       nanorc syntax parser + per-line span matcher
-    config/         option registry, defaults, TOML table reader, nanorc reader
+    config/         registry, Config + layers, toml_source, nanorc, paths
   nnano-tui/src/
-    lib.rs          App::run
+    lib.rs          App::run + App state (config, overlay, find)
     term/           raw mode, restore, panic hook, caps, input
-    ui/             status, overlays/, regions, style map
+    ui/             status, compose_line, viewport, text
+    ui/overlays/    Overlay enum, find prompt, settings, palette, help, prompt
   nnano/src/
     main.rs         args -> config -> terminal init -> App::run
 ```
@@ -305,7 +311,9 @@ Generation rules (runtime, **no codegen**):
 - CLI: `Command::args(OPTIONS.iter().map(row_to_arg))` — clap **builder**, never `derive`. `kind` produces both the `Arg` and its `ValueParser` (range checks, `PossibleValuesParser`), so clap's errors and the TOML validation come from the same row. `overlay.group` is reused as the `help_heading`.
 - TOML: parsed into `toml::Table` (untyped), then each key is resolved against the table and coerced by `kind`. Unknown key ⇒ one warning; wrong type ⇒ warning for that key only; never abort.
 - nanorc: the same string-keyed lookup (`lookup(directive) -> Option<&Opt>`). This layer already needs the runtime table, so CLI and TOML reuse it instead of adding two more parsers.
-- Overlay: widgets built from `kind` + `overlay`; they read and write the same `Value` the CLI parsed.
+- Overlay: widgets built from `kind` + `overlay`; they read and write the same `Value` the CLI parsed. Integers step inside `Kind::Int`'s bounds, booleans toggle; the change goes into the live `Config`, never to disk.
+- Layers are `Vec<Layer>` with an `origin`, merged highest first against the registry defaults; warnings are deduplicated per message so a repeated unknown directive warns once.
+- Search is separate from config: the prompt's flags belong to the session, seeded from `case_sensitive`, so toggling them does not rewrite the file.
 - A macro cannot do this: `#[derive(Parser)]` / `#[derive(Deserialize)]` expand before the table exists and only see the struct the author wrote. Hand-writing any of the four surfaces is a bug.
 - Keep the surfaces coupled by ID, not by text: the overlay and `Action` reference `Opt` variants and `overlay` metadata, never label strings, so a renamed label cannot desync them.
 - Bool rows render as a flag pair (`--mouse` / `--no-mouse`, `overrides_with` each other) so the CLI can express "off" and still win over a lower layer.
@@ -338,7 +346,7 @@ That test is what enforces "dual configuration".
 2. `nnano-core::buffer` + text render + cursor + scroll; `TestBackend` snapshots in `nnano-tui`.
 3. `input.rs` complete against the keymap table; table-driven tests.
 4. Open/save in place (no `file~` backup) / dirty / quit-confirmation; `nnano -` stdin buffer.
-5. Overlays: settings (config mirror), command palette (open buffers), find (nano prompt semantics), help.
+5. **Done (2026-11-06).** Overlays: settings (config mirror), command palette, find (nano prompt semantics), help; option registry and layered config behind them.
 6. Mouse: selection, scroll, menu clicks; bracketed paste; rectangular selection.
 7. Undo/redo (grouped), replace, tabs, syntax highlighting (nano `.nanorc` model); keep `docs/{en,es,zh-Hans,ja}/shortcuts.md` in sync.
 

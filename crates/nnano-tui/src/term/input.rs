@@ -1,9 +1,14 @@
 //! Key decoding: one crossterm event -> one [`Action`], or nothing.
 //!
 //! This is the only place a key is named. Rows of the v1 keymap that have no
-//! feature yet (`^S` save, `^K` cut, `^O` open, …) deliberately decode to `None`
+//! feature yet (`^O` open, `^K` cut, undo, …) deliberately decode to `None`
 //! instead of a no-op action, and the deferred list below is asserted by a test so
 //! that adding one is a deliberate change, not an accident.
+//!
+//! Keys that are modal in nano decode to one `Action` and are interpreted by the
+//! focus: `M-B` is "backwards" everywhere (repeat the search outside a prompt,
+//! toggle the direction inside one), `M-C`/`M-R` only have a meaning in the find
+//! prompt, and outside it they are ignored until Replace lands.
 //!
 //! `^H` is Backspace, never Replace: Linux console and some `TERM`s send `^H` for
 //! backspace, so it is accepted both as `KeyCode::Backspace` and as Ctrl+H.
@@ -18,6 +23,7 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     if ctrl
         && !alt
@@ -31,6 +37,22 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'b' => Some(Action::MoveLeft),
             'd' => Some(Action::Delete),
             'l' => Some(Action::Redraw),
+            'f' => Some(Action::OpenFind),
+            'p' => Some(Action::OpenPalette),
+            _ => None,
+        };
+    }
+
+    if alt
+        && !ctrl
+        && let KeyCode::Char(raw) = key.code
+    {
+        return match raw.to_ascii_lowercase() {
+            'w' => Some(Action::FindNext),
+            'b' => Some(Action::ToggleBackwards),
+            'c' => Some(Action::ToggleCase),
+            'r' => Some(Action::ToggleRegexp),
+            ',' => Some(Action::OpenSettings),
             _ => None,
         };
     }
@@ -40,6 +62,10 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
         KeyCode::Tab => Some(Action::InsertTab),
         KeyCode::Backspace => Some(Action::Backspace),
         KeyCode::Delete => Some(Action::Delete),
+        KeyCode::Esc => Some(Action::Cancel),
+        KeyCode::F(1) => Some(Action::OpenHelp),
+        KeyCode::F(3) if shift => Some(Action::FindPrevious),
+        KeyCode::F(3) => Some(Action::FindNext),
         KeyCode::Left => Some(Action::MoveLeft),
         KeyCode::Right => Some(Action::MoveRight),
         // nano's page keys moved to PgUp/PgDn; Alt+arrows are the aliases.
@@ -106,6 +132,38 @@ mod tests {
             (plain(KeyCode::Tab), Action::InsertTab),
             (plain(KeyCode::Backspace), Action::Backspace),
             (plain(KeyCode::Delete), Action::Delete),
+            (
+                key(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                Action::OpenFind,
+            ),
+            (
+                key(KeyCode::Char('p'), KeyModifiers::CONTROL),
+                Action::OpenPalette,
+            ),
+            (
+                key(KeyCode::Char(','), KeyModifiers::ALT),
+                Action::OpenSettings,
+            ),
+            (key(KeyCode::Char('w'), KeyModifiers::ALT), Action::FindNext),
+            (
+                key(KeyCode::Char('b'), KeyModifiers::ALT),
+                Action::ToggleBackwards,
+            ),
+            (
+                key(KeyCode::Char('c'), KeyModifiers::ALT),
+                Action::ToggleCase,
+            ),
+            (
+                key(KeyCode::Char('r'), KeyModifiers::ALT),
+                Action::ToggleRegexp,
+            ),
+            (plain(KeyCode::F(1)), Action::OpenHelp),
+            (plain(KeyCode::F(3)), Action::FindNext),
+            (
+                key(KeyCode::F(3), KeyModifiers::SHIFT),
+                Action::FindPrevious,
+            ),
+            (plain(KeyCode::Esc), Action::Cancel),
             (plain(KeyCode::Char('a')), Action::Insert('a')),
             (
                 key(KeyCode::Char('A'), KeyModifiers::SHIFT),
@@ -137,13 +195,12 @@ mod tests {
         // Each of these gains an action in its own phase; until then the key is
         // inert rather than a silent no-op variant.
         for (code, modifiers) in [
-            (KeyCode::Char('o'), KeyModifiers::CONTROL), // open, phase 4
+            (KeyCode::Char('o'), KeyModifiers::CONTROL), // open, later phase
             (KeyCode::Char('k'), KeyModifiers::CONTROL), // cut line, phase 7
             (KeyCode::Char('u'), KeyModifiers::CONTROL), // paste line, phase 7
             (KeyCode::Char('z'), KeyModifiers::CONTROL), // undo, phase 7
-            (KeyCode::Char('f'), KeyModifiers::CONTROL), // find, phase 7
-            (KeyCode::Char('p'), KeyModifiers::CONTROL), // palette, phase 5
-            (KeyCode::Esc, KeyModifiers::NONE),          // overlays, phase 5
+            (KeyCode::Char('a'), KeyModifiers::ALT),     // select all, phase 6
+            (KeyCode::Char('g'), KeyModifiers::ALT),     // goto, later
             (KeyCode::Char('q'), KeyModifiers::ALT),     // not a binding
         ] {
             assert_eq!(
