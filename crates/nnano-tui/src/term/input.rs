@@ -39,6 +39,13 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'l' => Some(Action::Redraw),
             'f' => Some(Action::OpenFind),
             'p' => Some(Action::OpenPalette),
+            'a' => Some(Action::SelectAll),
+            'c' => Some(Action::Copy),
+            'v' | 'u' => Some(Action::Paste),
+            'x' => Some(Action::Cut),
+            'k' => Some(Action::CutLine),
+            'z' => Some(Action::Undo),
+            'y' => Some(Action::Redo),
             _ => None,
         };
     }
@@ -53,6 +60,11 @@ pub fn decode(key: &KeyEvent) -> Option<Action> {
             'c' => Some(Action::ToggleCase),
             'r' => Some(Action::ToggleRegexp),
             ',' => Some(Action::OpenSettings),
+            'a' => Some(Action::StartMark),
+            '6' => Some(Action::Copy),
+            'z' => Some(Action::ToggleBlockSelection),
+            'u' => Some(Action::Undo),
+            'e' => Some(Action::Redo),
             _ => None,
         };
     }
@@ -196,10 +208,9 @@ mod tests {
         // inert rather than a silent no-op variant.
         for (code, modifiers) in [
             (KeyCode::Char('o'), KeyModifiers::CONTROL), // open, later phase
-            (KeyCode::Char('k'), KeyModifiers::CONTROL), // cut line, phase 7
-            (KeyCode::Char('u'), KeyModifiers::CONTROL), // paste line, phase 7
-            (KeyCode::Char('z'), KeyModifiers::CONTROL), // undo, phase 7
-            (KeyCode::Char('a'), KeyModifiers::ALT),     // select all, phase 6
+            (KeyCode::Char('n'), KeyModifiers::CONTROL), // new buffer, phase 7
+            (KeyCode::Char('t'), KeyModifiers::CONTROL), // new tab, phase 7
+            (KeyCode::Char('w'), KeyModifiers::CONTROL), // close buffer, phase 7
             (KeyCode::Char('g'), KeyModifiers::ALT),     // goto, later
             (KeyCode::Char('q'), KeyModifiers::ALT),     // not a binding
         ] {

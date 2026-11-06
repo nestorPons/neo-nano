@@ -20,8 +20,10 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crossterm::event::{self, Event};
-use nnano_core::buffer::{DEFAULT_TAB_WIDTH, EncodeError, Encoding, TextBuffer, encoding};
+use crossterm::event::{self, Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use nnano_core::buffer::{
+    DEFAULT_TAB_WIDTH, EncodeError, Encoding, Selection, TextBuffer, encoding,
+};
 use nnano_core::config::{Config, Opt};
 use nnano_core::editor::{Action, Editor};
 use nnano_core::search::{Direction, Search};
@@ -60,6 +62,9 @@ pub struct App {
     overlay: Option<Overlay>,
     /// Last search: pattern and toggles survive the prompt, as in nano.
     find: FindSettings,
+    /// Last known terminal size, so a mouse event can be mapped without asking
+    /// the terminal again.
+    screen: (u16, u16),
 }
 
 impl App {
@@ -92,6 +97,7 @@ impl App {
             config,
             overlay: None,
             find: FindSettings::default(),
+            screen: (0, 0),
         }
     }
 
@@ -156,8 +162,13 @@ impl App {
         }
         let mut session = term::Session::start()?;
         while !self.quit {
+            // The `mouse` option can be flipped in the settings overlay, so the
+            // capture state is synced every tick; `set_mouse` is a no-op when it
+            // already matches.
+            session.set_mouse(self.config.bool(Opt::Mouse))?;
             if self.redraw {
                 let size = session.terminal().size()?;
+                self.screen = (size.width, size.height);
                 let body_height = size.height.saturating_sub(1);
                 self.body_height = body_height;
                 ui::ensure_cursor_visible(&mut self, size.width, body_height);
@@ -173,11 +184,104 @@ impl App {
                         self.apply(action);
                     }
                 }
-                Event::Resize(_, _) => self.redraw = true,
+                Event::Mouse(mouse) => self.on_mouse(mouse),
+                // Bracketed paste arrives as one event, not as keystrokes, so it
+                // is one undo step and cannot trip over Ctrl shortcuts.
+                Event::Paste(text) => self.apply(Action::PasteText(text)),
+                Event::Resize(width, height) => {
+                    self.screen = (width, height);
+                    self.redraw = true;
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// Mouse: click places the cursor, drag marks, wheel scrolls. Alt+drag is a
+    /// rectangular mark. Panels take clicks on their rows.
+    fn on_mouse(&mut self, event: MouseEvent) {
+        if !self.config.bool(Opt::Mouse) {
+            return;
+        }
+        if self.overlay.is_some() {
+            self.on_overlay_mouse(event);
+            return;
+        }
+        let body = self.body_rect();
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some((line, col)) = self.hit_test(event.column, event.row, body) else {
+                    return;
+                };
+                if event.modifiers.contains(KeyModifiers::ALT) && !self.editor.block_mode() {
+                    self.apply(Action::ToggleBlockSelection);
+                }
+                self.apply(Action::ClickAt(line, col));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some((line, col)) = self.hit_test(event.column, event.row, body) {
+                    self.apply(Action::ExtendTo(line, col));
+                }
+            }
+            MouseEventKind::ScrollDown => self.apply(Action::ScrollView(3)),
+            MouseEventKind::ScrollUp => self.apply(Action::ScrollView(-3)),
+            _ => {}
+        }
+    }
+
+    fn on_overlay_mouse(&mut self, event: MouseEvent) {
+        if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let body = self.body_rect();
+        let Some(overlay) = self.overlay.take() else {
+            return;
+        };
+        match overlay {
+            Overlay::Settings(mut settings) => {
+                if let Some(index) = ui::overlays::settings::row_at(body, event.row) {
+                    settings.select(index);
+                }
+                self.overlay = Some(Overlay::Settings(settings));
+            }
+            Overlay::Palette(mut palette) => {
+                if let Some(index) = ui::overlays::palette::row_at(body, event.row, &palette) {
+                    palette.select(index);
+                    if let Some(action) = palette.selected_action() {
+                        self.apply(action);
+                        return;
+                    }
+                }
+                self.overlay = Some(Overlay::Palette(palette));
+            }
+            other => self.overlay = Some(other),
+        }
+    }
+
+    /// Screen cell -> `(line, char col)` inside the body, or nothing outside it.
+    fn hit_test(&self, x: u16, y: u16, body: ratatui::layout::Rect) -> Option<(usize, usize)> {
+        if x < body.x
+            || y < body.y
+            || x >= body.x.saturating_add(body.width)
+            || y >= body.y.saturating_add(body.height)
+        {
+            return None;
+        }
+        let buffer = self.editor.buffer();
+        let line = self.viewport.top_line + usize::from(y - body.y);
+        if line >= buffer.line_count() {
+            return None;
+        }
+        let target = self.viewport.left_col + usize::from(x - body.x);
+        let col = ui::text::column_to_char(buffer, line, target, self.tab_width());
+        Some((line, col))
+    }
+
+    /// The text area: everything above the status row.
+    fn body_rect(&self) -> ratatui::layout::Rect {
+        let (width, height) = self.screen;
+        ratatui::layout::Rect::new(0, 0, width, height.saturating_sub(1))
     }
 
     /// Single mutation path: keyboard, palette and (later) mouse all land here.
@@ -205,7 +309,9 @@ impl App {
             Action::ToggleBackwards => self.repeat_find(Direction::Backward),
             // `M-C`/`M-R` only mean something in a prompt; `M-R` will open Replace
             // in phase 7.
-            Action::Cancel | Action::ToggleCase | Action::ToggleRegexp => {}
+            Action::Cancel => self.editor.clear_selection(),
+            Action::ToggleCase | Action::ToggleRegexp => {}
+            Action::ScrollView(delta) => self.scroll(delta),
             // Pages are the only actions that need viewport geometry.
             Action::PageUp => self.editor.move_vertical(-page_step(self.body_height)),
             Action::PageDown => self.editor.move_vertical(page_step(self.body_height)),
@@ -218,12 +324,12 @@ impl App {
     /// rest are per-overlay.
     fn apply_overlay(&mut self, action: Action, confirming: bool) {
         if let Some(Overlay::Find(prompt)) = &mut self.overlay
-            && prompt.apply(action)
+            && prompt.apply(action.clone())
         {
             return;
         }
         if let Some(Overlay::Palette(palette)) = &mut self.overlay
-            && palette.edit(action)
+            && palette.edit(action.clone())
         {
             return;
         }
@@ -303,6 +409,14 @@ impl App {
         } else {
             self.quit = true;
         }
+    }
+
+    /// Wheel scrolling moves the window, not the cursor, so a mouse wheel never
+    /// destroys a mark or edits anything.
+    fn scroll(&mut self, delta: isize) {
+        let last = self.editor.buffer().line_count().saturating_sub(1);
+        let top = self.viewport.top_line.saturating_add_signed(delta);
+        self.viewport.top_line = top.min(last);
     }
 
     /// `^S`. Writes in place when there is a path; nothing is written otherwise.
@@ -411,6 +525,10 @@ impl App {
         &self.config
     }
 
+    pub(crate) fn selection(&self) -> Option<&Selection> {
+        self.editor.selection()
+    }
+
     pub(crate) fn overlay(&self) -> Option<&Overlay> {
         self.overlay.as_ref()
     }
@@ -512,6 +630,7 @@ pub fn run(file: Option<String>, config: Config) -> io::Result<()> {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use nnano_core::buffer::Encoding;
     use nnano_core::config::{Config, Layer, Opt, Value};
     use nnano_core::editor::Action;
@@ -541,6 +660,110 @@ mod tests {
             values: values.to_vec(),
             warnings: Vec::new(),
         }])
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_click_places_the_cursor_and_a_drag_marks() {
+        let mut app = App::from_text("s.txt", "uno\ndos\n");
+        app.screen = (80, 24);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
+        assert_eq!(
+            (app.editor().cursor().line(), app.editor().cursor().col()),
+            (1, 2)
+        );
+
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        app.on_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 2, 0));
+        let selection = app.selection().unwrap();
+        assert_eq!(selection.text(app.editor().buffer()), "un");
+    }
+
+    #[test]
+    fn a_click_outside_the_text_area_is_ignored() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.screen = (20, 5);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 5, 4));
+        assert_eq!(app.editor().cursor().col(), 0);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 30, 1));
+        assert_eq!(app.editor().cursor().col(), 0);
+    }
+
+    #[test]
+    fn alt_drag_marks_a_rectangle() {
+        let mut app = App::from_text("s.txt", "abc\ndef\nghi\n");
+        app.screen = (80, 24);
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::ALT,
+        });
+        app.on_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 2, 2));
+        let selection = app.selection().unwrap();
+        assert_eq!(selection.mode(), nnano_core::buffer::SelectionMode::Block);
+        assert_eq!(selection.text(app.editor().buffer()), "ab\nde\ngh");
+    }
+
+    #[test]
+    fn the_wheel_scrolls_without_moving_the_cursor() {
+        let text = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        app.screen = (40, 10);
+        app.on_mouse(mouse(MouseEventKind::ScrollDown, 1, 1));
+        assert_eq!(app.viewport().top_line, 3);
+        assert_eq!(app.editor().cursor().line(), 0);
+        app.on_mouse(mouse(MouseEventKind::ScrollUp, 1, 1));
+        assert_eq!(app.viewport().top_line, 0);
+    }
+
+    #[test]
+    fn the_mouse_option_turns_clicks_off() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply_config(config(&[(Opt::Mouse, Value::Bool(false))]));
+        app.screen = (80, 24);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 0));
+        assert_eq!(app.editor().cursor().col(), 0);
+    }
+
+    #[test]
+    fn a_bracketed_paste_can_be_undone_in_one_step() {
+        let mut app = App::from_text("s.txt", "");
+        app.apply(Action::PasteText("uno\ndos".to_string()));
+        assert_eq!(app.editor().buffer().line_count(), 2);
+        app.apply(Action::Undo);
+        assert!(app.editor().buffer().is_empty());
+    }
+
+    #[test]
+    fn clicking_a_settings_row_moves_the_highlight() {
+        let mut app = App::from_text("s.txt", "");
+        app.screen = (80, 24);
+        app.apply(Action::OpenSettings);
+        // Panel: 3 options + 3 groups + 4 = 10 rows, centered in a 23-row body.
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 10, 12));
+        let Some(super::Overlay::Settings(settings)) = app.overlay() else {
+            panic!("settings should still be open");
+        };
+        assert_eq!(settings.selected(), 2);
+    }
+
+    #[test]
+    fn clicking_a_palette_row_runs_the_command() {
+        let mut app = App::from_text("s.txt", "");
+        app.screen = (80, 24);
+        app.apply(Action::OpenPalette);
+        // Filter row at 7, commands at 8..=14: the last one is Quit.
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 10, 14));
+        assert!(app.quit);
     }
 
     #[test]
@@ -825,7 +1048,7 @@ mod tests {
             Action::OpenHelp,
         ] {
             let mut app = App::from_text("s.txt", "");
-            app.apply(open);
+            app.apply(open.clone());
             assert!(app.overlay().is_some(), "{open:?}");
             app.apply(Action::Cancel);
             assert!(app.overlay().is_none(), "{open:?}");

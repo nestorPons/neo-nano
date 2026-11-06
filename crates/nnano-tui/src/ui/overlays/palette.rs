@@ -16,7 +16,7 @@ use super::prompt::{Prompt, prompt_width};
 
 /// One selectable command. `Action` is the only mutation path, so the palette
 /// cannot do anything the keymap cannot.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Command {
     pub label: &'static str,
     pub action: Action,
@@ -69,6 +69,11 @@ impl Palette {
         self.selected
     }
 
+    /// Put the highlight on `index` (mouse click).
+    pub fn select(&mut self, index: usize) {
+        self.selected = index.min(COMMANDS.len().saturating_sub(1));
+    }
+
     /// Commands matching the filter, in registry order.
     pub fn rows(&self) -> Vec<&'static Command> {
         let filter = self.prompt.text().to_lowercase();
@@ -98,8 +103,26 @@ impl Palette {
     }
 
     pub fn selected_action(&self) -> Option<Action> {
-        self.rows().get(self.selected).map(|command| command.action)
+        self.rows()
+            .get(self.selected)
+            .map(|command| command.action.clone())
     }
+}
+
+/// Panel inner area for the current filter length; the mouse hit test needs the
+/// same geometry the renderer used.
+fn panel(area: Rect, rows: usize) -> Rect {
+    let height = u16::try_from(rows + 3).unwrap_or(u16::MAX);
+    super::panel_inner(area, 44, height)
+}
+
+/// Command row under a screen row, for a click inside the panel.
+pub fn row_at(area: Rect, y: u16, palette: &Palette) -> Option<usize> {
+    let rows = palette.rows().len();
+    let inner = panel(area, rows);
+    let first = inner.y.saturating_add(1);
+    let offset = usize::from(y.checked_sub(first)?);
+    (offset < rows).then_some(offset)
 }
 
 /// Floating palette: filter on top, matching commands below, cursor in the filter.

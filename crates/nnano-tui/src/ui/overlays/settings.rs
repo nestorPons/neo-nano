@@ -71,15 +71,52 @@ impl Settings {
     }
 }
 
-/// Floating panel with the option rows and the selected row's help text.
-pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
+/// Height of the panel: options, group headings, the help line, the key line and
+/// the two border rows.
+fn height() -> u16 {
     let mut groups: Vec<&str> = Vec::new();
     for row in OPTIONS {
         if !groups.contains(&row.group) {
             groups.push(row.group);
         }
     }
-    let height = u16::try_from(OPTIONS.len() + groups.len() + 4).unwrap_or(u16::MAX);
+    u16::try_from(OPTIONS.len() + groups.len() + 4).unwrap_or(u16::MAX)
+}
+
+/// Panel row of each option, with the group headings counted in. Shared by the
+/// renderer and the mouse hit test so a click lands on what is drawn.
+fn row_offsets() -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(OPTIONS.len());
+    let mut line = 0;
+    let mut group = "";
+    for row in OPTIONS {
+        if row.group != group {
+            group = row.group;
+            line += 1;
+        }
+        offsets.push(line);
+        line += 1;
+    }
+    offsets
+}
+
+/// Option under a screen row, for a click inside the panel.
+pub fn row_at(area: Rect, y: u16) -> Option<usize> {
+    let inner = super::panel_inner(area, 52, height());
+    let offset = usize::from(y.checked_sub(inner.y)?);
+    row_offsets().iter().position(|line| *line == offset)
+}
+
+impl Settings {
+    /// Put the highlight on `index` (mouse click).
+    pub fn select(&mut self, index: usize) {
+        self.selected = index.min(OPTIONS.len() - 1);
+    }
+}
+
+/// Floating panel with the option rows and the selected row's help text.
+pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
+    let height = height();
     let inner = popup_frame(frame, area, 52, height, "Settings");
 
     let [list, footer] =
@@ -136,16 +173,18 @@ mod tests {
 
     #[test]
     fn arrows_move_the_selection_within_bounds() {
+        use nnano_core::config::OPTIONS;
+
         let mut settings = Settings::new();
         let mut config = config();
         settings.handle(Action::MoveUp, &mut config);
         assert_eq!(settings.selected(), 0);
-        settings.handle(Action::MoveDown, &mut config);
-        settings.handle(Action::MoveDown, &mut config);
-        settings.handle(Action::MoveDown, &mut config);
-        assert_eq!(settings.selected(), 1);
+        for _ in 0..OPTIONS.len() + 3 {
+            settings.handle(Action::MoveDown, &mut config);
+        }
+        assert_eq!(settings.selected(), OPTIONS.len() - 1);
         settings.handle(Action::MoveUp, &mut config);
-        assert_eq!(settings.selected(), 0);
+        assert_eq!(settings.selected(), OPTIONS.len() - 2);
     }
 
     #[test]

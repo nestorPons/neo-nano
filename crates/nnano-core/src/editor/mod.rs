@@ -9,10 +9,18 @@
 //! their own phases and are absent from `Action` until they exist — no silent
 //! no-op variants.
 
-use crate::buffer::{Cursor, DEFAULT_TAB_WIDTH, TextBuffer, char_offset_for_column};
+use std::time::Instant;
+
+use crate::buffer::{
+    Cursor, DEFAULT_TAB_WIDTH, Edit, History, Selection, SelectionMode, TextBuffer,
+    char_offset_for_column,
+};
 
 /// Everything the editor can be told to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Copy`: a bracketed paste carries its text. Everything else is a plain
+/// enum variant, and the payload actions are the only ones that allocate.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// `^Q`. Confirmation belongs to the app loop.
     Quit,
@@ -40,6 +48,32 @@ pub enum Action {
     FindNext,
     /// `M-B`/`Shift+F3`: repeat the last search backwards.
     FindPrevious,
+    /// `M-A`: start or clear the mark.
+    StartMark,
+    /// `^A`: select the whole buffer.
+    SelectAll,
+    /// `M-Z`: make the mark rectangular (or the next one, if there is none).
+    ToggleBlockSelection,
+    /// `^C` / `M-6`: copy the marked region, or the current line.
+    Copy,
+    /// `^X`: cut the marked region, or the current line.
+    Cut,
+    /// `^K`: cut the mark, or the current line (consecutive cuts accumulate).
+    CutLine,
+    /// `^V` / `^U`: paste the internal register.
+    Paste,
+    /// Bracketed paste from the terminal: insert this text as one undo step.
+    PasteText(String),
+    /// Mouse press: place the cursor and drop the mark.
+    ClickAt(usize, usize),
+    /// Mouse drag: extend the mark to this position.
+    ExtendTo(usize, usize),
+    /// Mouse wheel: scroll the viewport without moving the cursor.
+    ScrollView(isize),
+    /// `^Z` / `M-U`: undo the last group.
+    Undo,
+    /// `^Y` / `M-E`: redo the last undone group.
+    Redo,
     Insert(char),
     InsertTab,
     Newline,
@@ -72,6 +106,15 @@ pub struct Editor {
     /// `tab_size` from the registry, kept here so vertical movement and the goal
     /// column use the same arithmetic as the renderer.
     tab_width: usize,
+    /// The mark, when one is active.
+    selection: Option<Selection>,
+    /// Whether the next mark is rectangular.
+    block_mode: bool,
+    /// Internal clipboard. Always available; OSC 52 is an opt-in copy *out*, not
+    /// the storage.
+    register: String,
+    /// Undo/redo stacks and their grouping clock.
+    history: History,
 }
 
 impl Default for Editor {
@@ -82,6 +125,10 @@ impl Default for Editor {
             goal_col: None,
             dirty: false,
             tab_width: DEFAULT_TAB_WIDTH,
+            selection: None,
+            block_mode: false,
+            register: String::new(),
+            history: History::default(),
         }
     }
 }
@@ -120,15 +167,19 @@ impl Editor {
         self.dirty
     }
 
-    /// After a successful write: the buffer matches the file again.
+    /// After a successful write: the buffer matches the file again, and saving is
+    /// a hard undo boundary.
     pub fn mark_saved(&mut self) {
         self.dirty = false;
+        self.history.break_group();
     }
 
-    /// Place the cursor somewhere (goto, tests, click). Clamped to the buffer.
+    /// Place the cursor somewhere (goto, tests, click). Clamped to the buffer,
+    /// and it drops the mark.
     pub fn set_cursor(&mut self, line: usize, col: usize) {
         self.cursor = Cursor::new(line, col);
         self.cursor.clamp(&self.buffer);
+        self.selection = None;
         self.goal_col = None;
     }
 
@@ -136,8 +187,8 @@ impl Editor {
     pub fn apply(&mut self, action: Action) {
         match action {
             // `Quit`/`Save` are owned by the app loop (it has the path and the
-            // file), pages need a viewport height, and the rest are overlay or
-            // search actions owned by `App`.
+            // file), pages and scrolling need viewport geometry, and the rest are
+            // overlay or search actions owned by `App`.
             Action::Quit
             | Action::Save
             | Action::Redraw
@@ -151,6 +202,7 @@ impl Editor {
             | Action::ToggleBackwards
             | Action::FindNext
             | Action::FindPrevious
+            | Action::ScrollView(_)
             | Action::PageUp
             | Action::PageDown => {}
             Action::Insert(ch) => {
@@ -162,28 +214,50 @@ impl Editor {
             Action::Newline => self.insert("\n"),
             Action::Backspace => self.backspace(),
             Action::Delete => self.delete_forward(),
-            Action::MoveLeft => self.move_left(),
-            Action::MoveRight => self.move_right(),
+            Action::MoveLeft => {
+                self.move_left();
+                self.follow();
+            }
+            Action::MoveRight => {
+                self.move_right();
+                self.follow();
+            }
             Action::MoveUp => self.move_vertical(-1),
             Action::MoveDown => self.move_vertical(1),
             Action::MoveLineStart => {
                 self.cursor = Cursor::new(self.cursor.line(), 0);
                 self.goal_col = None;
+                self.follow();
             }
             Action::MoveLineEnd => {
                 let line = self.cursor.line();
                 self.cursor = Cursor::new(line, self.buffer.line_len(line));
                 self.goal_col = None;
+                self.follow();
             }
             Action::MoveFileStart => {
                 self.cursor = Cursor::new(0, 0);
                 self.goal_col = None;
+                self.follow();
             }
             Action::MoveFileEnd => {
                 let line = self.buffer.line_count() - 1;
                 self.cursor = Cursor::new(line, self.buffer.line_len(line));
                 self.goal_col = None;
+                self.follow();
             }
+            Action::StartMark => self.toggle_mark(),
+            Action::SelectAll => self.select_all(),
+            Action::ToggleBlockSelection => self.toggle_block(),
+            Action::Copy => self.copy(),
+            Action::Cut => self.cut(),
+            Action::CutLine => self.cut_line(),
+            Action::Paste => self.paste(),
+            Action::PasteText(text) => self.paste_text(&text),
+            Action::ClickAt(line, col) => self.set_cursor(line, col),
+            Action::ExtendTo(line, col) => self.extend_to(line, col),
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
         }
     }
 
@@ -203,48 +277,357 @@ impl Editor {
         let col = char_offset_for_column(self.buffer.line_chars(line), goal, tab_width);
         self.cursor = Cursor::new(line, col);
         self.goal_col = Some(goal);
+        self.follow();
+    }
+
+    pub fn selection(&self) -> Option<&Selection> {
+        self.selection.as_ref()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection
+            .is_some_and(|selection| !selection.is_empty())
+    }
+
+    pub fn block_mode(&self) -> bool {
+        self.block_mode
+    }
+
+    /// Internal clipboard, for the status bar and tests.
+    pub fn register(&self) -> &str {
+        &self.register
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    /// A new mark starts at the cursor; `M-A` again clears it.
+    fn toggle_mark(&mut self) {
+        if self.selection.is_some() {
+            self.selection = None;
+        } else {
+            let mode = self.mark_mode();
+            self.selection = Some(Selection::new(self.cursor, self.cursor, mode));
+        }
+    }
+
+    fn select_all(&mut self) {
+        let line = self.buffer.line_count() - 1;
+        let end = Cursor::new(line, self.buffer.line_len(line));
+        self.selection = Some(Selection::new(Cursor::new(0, 0), end, self.mark_mode()));
+        self.cursor = end;
+        self.goal_col = None;
+    }
+
+    /// `M-Z`: rectangular marks from now on, and the active one switches too.
+    fn toggle_block(&mut self) {
+        self.block_mode = !self.block_mode;
+        let mode = self.mark_mode();
+        if let Some(mut selection) = self.selection {
+            selection.set_mode(mode);
+            self.selection = Some(selection);
+        }
+    }
+
+    fn mark_mode(&self) -> SelectionMode {
+        if self.block_mode {
+            SelectionMode::Block
+        } else {
+            SelectionMode::Stream
+        }
+    }
+
+    /// After a movement while marking, the head follows the cursor.
+    fn follow(&mut self) {
+        if let Some(mut selection) = self.selection {
+            selection.set_head(self.cursor);
+            self.selection = Some(selection);
+        }
+    }
+
+    /// Mouse drag: start a mark at the press position if needed, then extend it.
+    fn extend_to(&mut self, line: usize, col: usize) {
+        let mut head = Cursor::new(line, col);
+        head.clamp(&self.buffer);
+        match self.selection {
+            Some(mut selection) => {
+                selection.set_head(head);
+                self.selection = Some(selection);
+            }
+            None => {
+                let mode = self.mark_mode();
+                self.selection = Some(Selection::new(self.cursor, head, mode));
+            }
+        }
+        self.cursor = head;
+        self.goal_col = None;
+    }
+
+    fn copy(&mut self) {
+        match self.selection {
+            Some(selection) if !selection.is_empty() => {
+                self.register = selection.text(&self.buffer)
+            }
+            _ => self.register = self.line_with_terminator(self.cursor.line()),
+        }
+    }
+
+    /// `^X`: the mark when there is one, otherwise the current line.
+    fn cut(&mut self) {
+        if let Some(selection) = self.selection.filter(|selection| !selection.is_empty()) {
+            let text = selection.text(&self.buffer);
+            if !text.is_empty() {
+                self.register = text;
+            }
+            let before = self.cursor;
+            let edits = self.delete_selection_now();
+            self.history.record_group(edits, before, self.cursor);
+            return;
+        }
+        self.cut_current_line(false);
+    }
+
+    /// `^K`: the mark when there is one, otherwise the line; consecutive line
+    /// cuts accumulate in the register, as in nano.
+    fn cut_line(&mut self) {
+        if self.has_selection() {
+            self.cut();
+            return;
+        }
+        self.cut_current_line(true);
+    }
+
+    /// Cut the whole line including its terminator, and leave the cursor at its
+    /// start. `append` is the nano `^K` behaviour.
+    fn cut_current_line(&mut self, append: bool) {
+        let before = self.cursor;
+        let line = self.cursor.line();
+        let start = self.buffer.line_start(line);
+        let end = if line + 1 < self.buffer.line_count() {
+            self.buffer.line_start(line + 1)
+        } else {
+            self.buffer.line_end(line)
+        };
+        let text: String = (start..end)
+            .filter_map(|index| self.buffer.char_at(index))
+            .collect();
+        if text.is_empty() {
+            return;
+        }
+        if append {
+            self.register.push_str(&text);
+        } else {
+            self.register = text.clone();
+        }
+        self.buffer.remove(start..end);
+        let line = line.min(self.buffer.line_count() - 1);
+        self.cursor = Cursor::new(line, 0);
+        self.selection = None;
+        self.touch();
+        self.history
+            .record_group(vec![Edit::remove(start, text)], before, self.cursor);
+    }
+
+    /// The line plus its terminator, for a copy with no mark.
+    fn line_with_terminator(&self, line: usize) -> String {
+        let start = self.buffer.line_start(line);
+        let end = if line + 1 < self.buffer.line_count() {
+            self.buffer.line_start(line + 1)
+        } else {
+            self.buffer.line_end(line)
+        };
+        (start..end)
+            .filter_map(|index| self.buffer.char_at(index))
+            .collect()
+    }
+
+    fn paste(&mut self) {
+        if self.register.is_empty() {
+            return;
+        }
+        let text = self.register.clone();
+        self.insert(&text);
+    }
+
+    /// A bracketed paste is one undo step, never merged with typing.
+    fn paste_text(&mut self, text: &str) {
+        self.history.break_group();
+        self.insert(text);
+        self.history.break_group();
+    }
+
+    /// Undo one group; a no-op at the start of history.
+    fn undo(&mut self) {
+        if let Some(cursor) = self.history.undo(&mut self.buffer) {
+            self.cursor = cursor;
+            self.cursor.clamp(&self.buffer);
+            self.selection = None;
+            self.goal_col = None;
+            self.dirty = true;
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(cursor) = self.history.redo(&mut self.buffer) {
+            self.cursor = cursor;
+            self.cursor.clamp(&self.buffer);
+            self.selection = None;
+            self.goal_col = None;
+            self.dirty = true;
+        }
     }
 
     fn insert(&mut self, text: &str) {
+        let before = self.cursor;
+        let removed = if self.has_selection() {
+            self.delete_selection_now()
+        } else {
+            Vec::new()
+        };
         let start = self.cursor.char_index(&self.buffer);
         self.buffer.insert_str(start, text);
         let (line, col) = self.buffer.char_to_position(start + text.chars().count());
         self.cursor = Cursor::new(line, col);
         self.touch();
+        let insert = Edit::insert(start, text);
+        if removed.is_empty() {
+            self.history
+                .record(insert, before, self.cursor, Instant::now());
+        } else {
+            let mut edits = removed;
+            edits.push(insert);
+            self.history.record_group(edits, before, self.cursor);
+        }
+    }
+
+    /// Remove the marked region, returning the edits for the history. The cursor
+    /// lands at the start of what was removed.
+    fn delete_selection_now(&mut self) -> Vec<Edit> {
+        let Some(selection) = self.selection.take() else {
+            return Vec::new();
+        };
+        match selection.mode() {
+            SelectionMode::Stream => {
+                let (start, end) = selection.char_range(&self.buffer);
+                let removed = selection.text(&self.buffer);
+                if removed.is_empty() {
+                    return Vec::new();
+                }
+                self.buffer.remove(start..end);
+                self.cursor = self.position(start);
+                self.touch();
+                vec![Edit::remove(start, removed)]
+            }
+            SelectionMode::Block => {
+                let (first, _, left, _) = selection.block_bounds();
+                let mut edits = Vec::new();
+                for line in (first..=selection.block_bounds().1).rev() {
+                    let Some((from, to)) = selection.line_span(&self.buffer, line) else {
+                        continue;
+                    };
+                    let start = self.buffer.line_start(line) + from;
+                    let removed: String = (start..start + (to - from))
+                        .filter_map(|index| self.buffer.char_at(index))
+                        .collect();
+                    self.buffer.remove(start..start + (to - from));
+                    edits.push(Edit::remove(start, removed));
+                }
+                self.cursor = Cursor::new(first, left);
+                self.cursor.clamp(&self.buffer);
+                self.touch();
+                edits
+            }
+        }
+    }
+
+    fn position(&self, char_index: usize) -> Cursor {
+        let (line, col) = self.buffer.char_to_position(char_index);
+        Cursor::new(line, col)
     }
 
     /// Delete the char before the cursor, or join with the previous line.
     fn backspace(&mut self) {
+        if self.has_selection() {
+            let before = self.cursor;
+            let edits = self.delete_selection_now();
+            self.history.record_group(edits, before, self.cursor);
+            return;
+        }
         let (line, col) = (self.cursor.line(), self.cursor.col());
+        let before = self.cursor;
         if col > 0 {
             let index = self.cursor.char_index(&self.buffer);
+            let removed: String = (index - 1..index)
+                .filter_map(|at| self.buffer.char_at(at))
+                .collect();
             self.buffer.remove(index - 1..index);
             self.cursor = Cursor::new(line, col - 1);
+            self.touch();
+            self.history.record(
+                Edit::remove(index - 1, removed),
+                before,
+                self.cursor,
+                Instant::now(),
+            );
         } else if line > 0 {
             let previous = line - 1;
             let previous_len = self.buffer.line_len(previous);
+            let start = self.buffer.line_end(previous);
+            let end = self.buffer.line_start(line);
+            let removed: String = (start..end)
+                .filter_map(|at| self.buffer.char_at(at))
+                .collect();
             // The terminator may be "\n", "\r\n" or any other rope line break.
-            self.buffer
-                .remove(self.buffer.line_end(previous)..self.buffer.line_start(line));
+            self.buffer.remove(start..end);
             self.cursor = Cursor::new(previous, previous_len);
-        } else {
-            return;
+            self.touch();
+            self.history.record(
+                Edit::remove(start, removed),
+                before,
+                self.cursor,
+                Instant::now(),
+            );
         }
-        self.touch();
     }
 
     /// Delete the char under the cursor, or join with the next line.
     fn delete_forward(&mut self) {
-        let line = self.cursor.line();
-        let index = self.cursor.char_index(&self.buffer);
-        if index < self.buffer.line_end(line) {
-            self.buffer.remove(index..index + 1);
-        } else if line + 1 < self.buffer.line_count() {
-            self.buffer.remove(index..self.buffer.line_start(line + 1));
-        } else {
+        if self.has_selection() {
+            let before = self.cursor;
+            let edits = self.delete_selection_now();
+            self.history.record_group(edits, before, self.cursor);
             return;
         }
+        let line = self.cursor.line();
+        let index = self.cursor.char_index(&self.buffer);
+        let before = self.cursor;
+        let (start, end) = if index < self.buffer.line_end(line) {
+            (index, index + 1)
+        } else if line + 1 < self.buffer.line_count() {
+            (index, self.buffer.line_start(line + 1))
+        } else {
+            return;
+        };
+        let removed: String = (start..end)
+            .filter_map(|at| self.buffer.char_at(at))
+            .collect();
+        self.buffer.remove(start..end);
         self.touch();
+        self.history.record(
+            Edit::remove(start, removed),
+            before,
+            self.cursor,
+            Instant::now(),
+        );
     }
 
     fn move_left(&mut self) {
@@ -443,5 +826,178 @@ mod tests {
         assert!(!editor.is_dirty());
         editor.apply(Action::Delete);
         assert!(editor.is_dirty());
+    }
+
+    /// Multi-line text with real newlines; `text()` above keeps its escaped
+    /// separators for legacy assertions.
+    fn plain(editor: &Editor) -> String {
+        (0..editor.buffer().line_count())
+            .map(|line| editor.buffer().line_text(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn select(editor: &mut Editor, line: usize, col: usize, steps: usize) {
+        editor.set_cursor(line, col);
+        editor.apply(Action::StartMark);
+        for _ in 0..steps {
+            editor.apply(Action::MoveRight);
+        }
+    }
+
+    #[test]
+    fn movement_with_a_mark_extends_the_selection() {
+        let mut editor = editor("uno dos");
+        select(&mut editor, 0, 0, 3);
+        let selection = editor.selection().unwrap();
+        assert_eq!(selection.text(editor.buffer()), "uno");
+        assert_eq!(at(&editor), (0, 3));
+    }
+
+    #[test]
+    fn mark_again_clears_the_selection() {
+        let mut editor = editor("uno");
+        select(&mut editor, 0, 0, 2);
+        assert!(editor.selection().is_some());
+        editor.apply(Action::StartMark);
+        assert!(editor.selection().is_none());
+    }
+
+    #[test]
+    fn select_all_and_copy_takes_the_whole_buffer() {
+        let mut editor = editor("uno\ndos\n");
+        editor.apply(Action::SelectAll);
+        editor.apply(Action::Copy);
+        assert_eq!(editor.register(), "uno\ndos\n");
+    }
+
+    #[test]
+    fn copy_without_a_mark_takes_the_line_and_its_terminator() {
+        let mut editor = editor("uno\ndos\n");
+        editor.set_cursor(0, 1);
+        editor.apply(Action::Copy);
+        assert_eq!(editor.register(), "uno\n");
+    }
+
+    #[test]
+    fn cut_removes_the_mark_and_paste_puts_it_back() {
+        let mut editor = editor("uno dos");
+        select(&mut editor, 0, 0, 3);
+        editor.apply(Action::Cut);
+        assert_eq!(plain(&editor), " dos");
+        assert_eq!(editor.register(), "uno");
+        assert_eq!(at(&editor), (0, 0));
+        editor.apply(Action::Paste);
+        assert_eq!(plain(&editor), "uno dos");
+        assert_eq!(at(&editor), (0, 3));
+    }
+
+    #[test]
+    fn typing_over_a_selection_replaces_it() {
+        let mut editor = editor("uno dos");
+        select(&mut editor, 0, 0, 3);
+        editor.apply(Action::Insert('X'));
+        assert_eq!(plain(&editor), "X dos");
+        assert!(editor.selection().is_none());
+    }
+
+    #[test]
+    fn cut_line_accumulates_like_nano() {
+        let mut editor = editor("uno\ndos\ntres\n");
+        editor.set_cursor(0, 0);
+        editor.apply(Action::CutLine);
+        editor.apply(Action::CutLine);
+        assert_eq!(plain(&editor), "tres\n");
+        assert_eq!(editor.register(), "uno\ndos\n");
+        editor.apply(Action::Paste);
+        assert_eq!(plain(&editor), "uno\ndos\ntres\n");
+    }
+
+    #[test]
+    fn cutting_the_last_line_without_a_terminator_works() {
+        let mut editor = editor("uno\ndos");
+        editor.set_cursor(1, 0);
+        editor.apply(Action::CutLine);
+        assert_eq!(plain(&editor), "uno\n");
+        assert_eq!(editor.register(), "dos");
+    }
+
+    #[test]
+    fn a_block_selection_is_rectangular() {
+        let mut editor = editor("uno\ndos\ntres");
+        editor.apply(Action::ToggleBlockSelection);
+        editor.set_cursor(0, 0);
+        editor.apply(Action::StartMark);
+        editor.apply(Action::MoveRight);
+        editor.apply(Action::MoveRight);
+        editor.apply(Action::MoveDown);
+        let selection = editor.selection().unwrap();
+        assert_eq!(selection.text(editor.buffer()), "un\ndo");
+        editor.apply(Action::Copy);
+        assert_eq!(editor.register(), "un\ndo");
+    }
+
+    #[test]
+    fn block_cut_removes_a_rectangle_from_every_line() {
+        let mut editor = editor("abc\ndef\nghi");
+        editor.apply(Action::ToggleBlockSelection);
+        editor.set_cursor(0, 1);
+        editor.apply(Action::StartMark);
+        editor.apply(Action::MoveRight);
+        editor.apply(Action::MoveRight);
+        editor.apply(Action::MoveDown);
+        editor.apply(Action::MoveDown);
+        editor.apply(Action::Cut);
+        assert_eq!(plain(&editor), "a\nd\ng");
+        assert_eq!(editor.register(), "bc\nef\nhi");
+    }
+
+    #[test]
+    fn undo_and_redo_walk_the_grouped_history() {
+        let mut editor = editor("");
+        editor.apply(Action::Insert('h'));
+        editor.apply(Action::Insert('i'));
+        assert!(editor.can_undo());
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "");
+        assert!(editor.can_redo());
+        editor.apply(Action::Redo);
+        assert_eq!(plain(&editor), "hi");
+    }
+
+    #[test]
+    fn undo_restores_a_cut_line() {
+        let mut editor = editor("uno\ndos\n");
+        editor.apply(Action::CutLine);
+        assert_eq!(plain(&editor), "dos\n");
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "uno\ndos\n");
+    }
+
+    #[test]
+    fn undo_after_save_does_not_merge_into_the_previous_group() {
+        let mut editor = editor("");
+        editor.apply(Action::Insert('a'));
+        editor.mark_saved();
+        editor.apply(Action::Insert('b'));
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "a");
+    }
+
+    #[test]
+    fn a_bracketed_paste_is_one_undo_step() {
+        let mut editor = editor("");
+        editor.apply(Action::PasteText("uno\ndos".to_string()));
+        assert_eq!(plain(&editor), "uno\ndos");
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "");
+    }
+
+    #[test]
+    fn paste_without_a_register_does_nothing() {
+        let mut editor = editor("x");
+        editor.apply(Action::Paste);
+        assert_eq!(plain(&editor), "x");
+        assert!(!editor.is_dirty());
     }
 }

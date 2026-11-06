@@ -78,11 +78,31 @@ pub fn visible_line(
     RenderedLine::new(text, drawn)
 }
 
+/// Visual column where char offset `col` of `line` starts. Used by the selection
+/// highlight.
+pub fn char_column(buffer: &TextBuffer, line: usize, col: usize, tab_width: usize) -> usize {
+    nnano_core::buffer::line_visual_column(buffer.line_chars(line).take(col), tab_width)
+}
+
+/// Char offset whose cell contains visual column `target`, clamped to the line.
+/// The inverse of [`char_column`] for the mouse; a click inside a wide glyph or a
+/// tab puts the cursor before it, which is what the cursor can represent.
+pub fn column_to_char(buffer: &TextBuffer, line: usize, target: usize, tab_width: usize) -> usize {
+    let mut width = Width::new(0, tab_width);
+    for (col, ch) in buffer.line_chars(line).enumerate() {
+        width.push(ch);
+        if target < width.column() {
+            return col;
+        }
+    }
+    buffer.line_len(line)
+}
+
 #[cfg(test)]
 mod tests {
     use nnano_core::buffer::TextBuffer;
 
-    use super::visible_line;
+    use super::{char_column, column_to_char, visible_line};
 
     #[test]
     fn expands_tabs_into_spaces() {
@@ -127,6 +147,19 @@ mod tests {
     fn zero_width_takes_nothing() {
         let buffer = TextBuffer::from_text("abc");
         assert_eq!(visible_line(&buffer, 0, 0, 0, 8).text, "");
+    }
+
+    #[test]
+    fn columns_and_chars_round_trip() {
+        let buffer = TextBuffer::from_text("a\tb漢c");
+        for col in 0..=buffer.line_len(0) {
+            let cell = char_column(&buffer, 0, col, 4);
+            assert_eq!(column_to_char(&buffer, 0, cell, 4), col, "col {col}");
+        }
+        // A click inside the tab stops before it.
+        assert_eq!(column_to_char(&buffer, 0, 2, 4), 1);
+        // Past the end is the line end.
+        assert_eq!(column_to_char(&buffer, 0, 99, 4), buffer.line_len(0));
     }
 
     #[test]

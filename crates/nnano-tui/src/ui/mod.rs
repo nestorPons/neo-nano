@@ -12,7 +12,7 @@ pub mod overlays;
 pub mod text;
 pub mod viewport;
 
-use nnano_core::buffer::line_visual_column;
+use nnano_core::buffer::{Selection, line_visual_column};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -66,6 +66,10 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
         );
     }
 
+    if let Some(selection) = app.selection() {
+        draw_selection(frame, area, app, selection);
+    }
+
     if !show_cursor {
         return;
     }
@@ -79,6 +83,42 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
         && let (Ok(x), Ok(y)) = (u16::try_from(col), u16::try_from(row))
     {
         frame.set_cursor_position((area.x + x, area.y + y));
+    }
+}
+
+/// Reverse video over the marked cells, block or stream. Applied after the text so
+/// it wins over syntax colours (which land in phase 7).
+fn draw_selection(frame: &mut Frame, area: Rect, app: &App, selection: &Selection) {
+    let viewport = app.viewport();
+    let buffer = app.editor().buffer();
+    let tab_width = app.tab_width();
+    let style = Style::default().add_modifier(Modifier::REVERSED);
+
+    for row in 0..area.height {
+        let line = viewport.top_line + usize::from(row);
+        if line >= buffer.line_count() {
+            break;
+        }
+        let Some((from, to)) = selection.line_span(buffer, line) else {
+            continue;
+        };
+        let start =
+            text::char_column(buffer, line, from, tab_width).saturating_sub(viewport.left_col);
+        let end = text::char_column(buffer, line, to, tab_width).saturating_sub(viewport.left_col);
+        let left = start.min(usize::from(area.width));
+        let right = end.min(usize::from(area.width));
+        if right <= left {
+            continue;
+        }
+        frame.buffer_mut().set_style(
+            Rect::new(
+                area.x + u16::try_from(left).unwrap_or(0),
+                area.y + row,
+                u16::try_from(right - left).unwrap_or(u16::MAX),
+                1,
+            ),
+            style,
+        );
     }
 }
 
@@ -252,6 +292,30 @@ mod tests {
         assert_eq!(compose_line("abcd", "cd", 6), "abcdcd");
         assert_eq!(compose_line("漢", "", 2), "漢");
         assert_eq!(compose_line("", "x", 0), "");
+    }
+
+    #[test]
+    fn the_marked_region_is_rendered_in_reverse_video() {
+        let mut app = App::from_text("notes.txt", "uno\ndos\n");
+        app.set_cursor(0, 0);
+        app.apply(Action::StartMark);
+        app.apply(Action::MoveRight);
+        app.apply(Action::MoveRight);
+        let terminal = render(&app);
+        let buffer = terminal.backend().buffer();
+        for x in 0..2 {
+            assert!(
+                buffer[(x, 0)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::REVERSED),
+                "cell {x} should be marked"
+            );
+        }
+        assert!(
+            !buffer[(2, 0)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        );
     }
 
     #[test]

@@ -169,9 +169,15 @@ mod tests {
 
     #[test]
     fn unknown_directives_and_bad_values_warn_once() {
-        let layer = from_nanorc("~/.nanorc", "set mouse\nset tabsize huge\nset tabsize 0\n");
+        let layer = from_nanorc(
+            "~/.nanorc",
+            "set bogusdirective\nset tabsize huge\nset tabsize 0\n",
+        );
         let warnings = layer.warnings.join("\n");
-        assert!(warnings.contains("unknown directive `mouse`"), "{warnings}");
+        assert!(
+            warnings.contains("unknown directive `bogusdirective`"),
+            "{warnings}"
+        );
         assert!(
             warnings.contains("`tabsize` must be an integer"),
             "{warnings}"

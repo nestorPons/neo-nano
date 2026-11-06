@@ -166,7 +166,7 @@ mod tests {
     fn non_editing_actions_are_left_to_the_overlay() {
         let mut prompt = Prompt::new();
         for action in [Action::Newline, Action::Cancel, Action::ToggleCase] {
-            assert!(!prompt.apply(action), "{action:?}");
+            assert!(!prompt.apply(action.clone()), "{action:?}");
         }
     }
 

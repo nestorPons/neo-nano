@@ -13,11 +13,15 @@
 mod cursor;
 pub mod encoding;
 mod grapheme;
+mod history;
 mod rope;
+mod selection;
 
 pub use cursor::Cursor;
 pub use encoding::{DecodeError, EncodeError, Encoding, Loaded};
 pub use grapheme::{
     DEFAULT_TAB_WIDTH, Width, char_offset_for_column, line_visual_column, next_tab_stop,
 };
+pub use history::{Edit, History};
 pub use rope::TextBuffer;
+pub use selection::{Mode as SelectionMode, Selection};

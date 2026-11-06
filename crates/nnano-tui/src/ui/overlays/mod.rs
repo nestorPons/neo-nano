@@ -55,7 +55,7 @@ impl Overlay {
 }
 
 /// Centered rectangle, clamped to the available area.
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
+pub(crate) fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect {
@@ -64,6 +64,12 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     }
+}
+
+/// Inner area of a panel without drawing anything: the mouse hit test needs the
+/// same geometry the renderer used.
+pub(crate) fn panel_inner(area: Rect, width: u16, height: u16) -> Rect {
+    Block::bordered().inner(centered(area, width, height))
 }
 
 /// Clear a centered rectangle, draw a bordered title around it, and return the
