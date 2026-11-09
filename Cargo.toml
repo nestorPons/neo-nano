@@ -12,3 +12,19 @@ members = ["crates/nnano-core", "crates/nnano-tui", "crates/nnano"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+authors = ["Nestor Pons <nestorpons@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/nestorPons/neo-nano"
+homepage = "https://github.com/nestorPons/neo-nano"
+readme = "README.md"
+
+# Release is what ships, so it is tuned once here rather than per crate: thin
+# LTO keeps the link time reasonable, one codegen unit lets it inline across the
+# workspace, and `strip` drops the symbol table the binary never reads. Panic
+# stays unwinding on purpose: the terminal restore hook runs on the way out and
+# the shape of a crash should not change in release.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

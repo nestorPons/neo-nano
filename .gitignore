@@ -1,1 +1,5 @@
 /target
+# makepkg artifacts (the PKGBUILD and .SRCINFO are tracked)
+packaging/**/pkg/
+packaging/**/src/
+packaging/**/*.pkg.tar.*

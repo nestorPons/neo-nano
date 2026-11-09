@@ -4,6 +4,15 @@ description = "Terminal layer for nnano: raw mode, rendering, overlays, keymap, 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["editor", "tui", "ratatui", "terminal"]
+categories = ["text-editors"]
+# Internal crate: the binary is what ships.
+publish = false
 
 [dependencies]
 nnano-core = { path = "../nnano-core" }

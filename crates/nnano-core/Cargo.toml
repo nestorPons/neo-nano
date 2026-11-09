@@ -4,6 +4,15 @@ description = "Editor semantics for nnano: rope buffer, nano operations, config 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["editor", "text", "rope", "buffer"]
+categories = ["text-editors"]
+# Internal crate: the binary is what ships.
+publish = false
 
 [dependencies]
 ropey = "=1.6.1"

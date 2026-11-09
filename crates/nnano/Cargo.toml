@@ -4,6 +4,15 @@ description = "A modern, nano-compatible terminal text editor."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["editor", "tui", "terminal", "nano", "text"]
+categories = ["command-line-utilities", "text-editors"]
+# Distributed as an AUR package, not through crates.io.
+publish = false
 
 [[bin]]
 name = "nnano"
