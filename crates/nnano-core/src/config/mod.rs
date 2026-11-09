@@ -16,13 +16,14 @@ mod paths;
 mod toml_source;
 
 pub use nanorc::from_nanorc;
-pub use paths::Paths;
+pub use paths::{Paths, detect_state_dir, state_dir};
 pub use toml_source::from_toml;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 use crate::buffer::DEFAULT_TAB_WIDTH;
+use crate::i18n::{CODES as LANGUAGE_CODES, Lang};
 
 /// Compile-time handle for one option: what code passes to `Config::get`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -31,6 +32,8 @@ pub enum Opt {
     CaseSensitive,
     Mouse,
     Syntax,
+    Osc52,
+    Language,
 }
 
 /// Type of an option's value, with its bounds. Drives clap, TOML coercion, the
@@ -38,7 +41,14 @@ pub enum Opt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Bool,
-    Int { min: i64, max: i64 },
+    Int {
+        min: i64,
+        max: i64,
+    },
+    /// A closed set of strings, e.g. the language codes. The list is the single
+    /// source of truth for the CLI's values, TOML validation and the overlay's
+    /// cycling picker.
+    Enum(&'static [&'static str]),
 }
 
 impl Kind {
@@ -47,38 +57,59 @@ impl Kind {
         match self {
             Kind::Bool => "true or false",
             Kind::Int { .. } => "an integer",
+            Kind::Enum(_) => "one of the allowed values",
+        }
+    }
+
+    /// The allowed values of an [`Kind::Enum`], for the surfaces that list them.
+    pub fn values(self) -> Option<&'static [&'static str]> {
+        match self {
+            Kind::Enum(values) => Some(values),
+            Kind::Bool | Kind::Int { .. } => None,
         }
     }
 }
 
-/// A value an option can hold.
+/// A value an option can hold. `Text` only ever holds a `&'static str` taken
+/// from its row's [`Kind::Enum`] list, so it stays `Copy` and cannot point into
+/// a file that has already been dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Value {
     Bool(bool),
     Int(i64),
+    Text(&'static str),
 }
 
 impl Value {
     pub fn as_bool(self) -> Option<bool> {
         match self {
             Value::Bool(value) => Some(value),
-            Value::Int(_) => None,
+            _ => None,
         }
     }
 
     pub fn as_int(self) -> Option<i64> {
         match self {
             Value::Int(value) => Some(value),
-            Value::Bool(_) => None,
+            _ => None,
         }
     }
 
-    /// Overlay text: `on`/`off` for booleans, the number as typed.
+    pub fn as_text(self) -> Option<&'static str> {
+        match self {
+            Value::Text(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Overlay text: `on`/`off` for booleans, the number as typed, the code for
+    /// an enum. Neutral on purpose; the TUI translates `on`/`off` itself.
     pub fn label(self) -> String {
         match self {
             Value::Bool(true) => "on".to_string(),
             Value::Bool(false) => "off".to_string(),
             Value::Int(value) => value.to_string(),
+            Value::Text(value) => value.to_string(),
         }
     }
 }
@@ -184,12 +215,46 @@ pub const OPTIONS: &[OptRow] = &[
         label: "Mouse support",
         help: "Click to place the cursor, drag to select, wheel to scroll",
     },
+    OptRow {
+        id: Opt::Osc52,
+        key: "osc52",
+        long: "osc52",
+        short: None,
+        kind: Kind::Bool,
+        default: Value::Bool(false),
+        // nano has no equivalent: this is a copy *out*, opt-in because some
+        // terminals ignore it and a slow tty can stall on a big sequence.
+        nanorc: None,
+        group: "Interface",
+        label: "Copy out with OSC 52",
+        help: "Also send a copy to the system clipboard, capped at 64 KiB",
+    },
+    OptRow {
+        id: Opt::Language,
+        key: "language",
+        long: "language",
+        short: None,
+        kind: Kind::Enum(LANGUAGE_CODES),
+        default: Value::Text("en"),
+        // nano has no interface language, and `.nanorc` has no directive to map.
+        nanorc: None,
+        group: "Interface",
+        label: "Language",
+        help: "Interface language; auto follows the system locale",
+    },
 ];
 
 /// Every variant, for the drift test. A new variant breaks the exhaustive
 /// `match` in `tests::every_variant_is_listed` before it can be forgotten here.
 #[cfg(test)]
-const ALL_OPTS: &[Opt] = &[Opt::TabSize, Opt::CaseSensitive, Opt::Mouse, Opt::Syntax];
+const ALL_OPTS: &[Opt] = &[
+    Opt::TabSize,
+    Opt::CaseSensitive,
+    Opt::Mouse,
+    Opt::Syntax,
+    Opt::Osc52,
+    Opt::Language,
+];
 
 /// The row that declares `id`.
 pub fn row(id: Opt) -> &'static OptRow {
@@ -217,7 +282,9 @@ pub fn by_nanorc(name: &str) -> Option<&'static OptRow> {
 }
 
 impl OptRow {
-    /// Check a value against this row's kind and bounds.
+    /// Check a value against this row's kind and bounds. An enum also
+    /// canonicalises: `ZH-hans` and `zh` both land on the code the registry
+    /// declares, so the value stored is always one of `Kind::values`.
     pub fn validate(&self, value: Value) -> Result<Value, ValueError> {
         match (self.kind, value) {
             (Kind::Bool, Value::Bool(_)) => Ok(value),
@@ -225,6 +292,12 @@ impl OptRow {
                 Ok(Value::Int(number))
             }
             (Kind::Int { min, max }, Value::Int(_)) => Err(ValueError::Range { min, max }),
+            (Kind::Enum(values), Value::Text(text)) => self
+                .canonical(values, text)
+                .map(Value::Text)
+                .ok_or(ValueError::Type {
+                    expected: self.kind.expected(),
+                }),
             (kind, _) => Err(ValueError::Type {
                 expected: kind.expected(),
             }),
@@ -242,8 +315,30 @@ impl OptRow {
             Kind::Int { .. } => Value::Int(raw.parse::<i64>().map_err(|_| ValueError::Type {
                 expected: "an integer",
             })?),
+            Kind::Enum(values) => {
+                Value::Text(self.canonical(values, raw).ok_or(ValueError::Type {
+                    expected: self.kind.expected(),
+                })?)
+            }
         };
         self.validate(value)
+    }
+
+    /// The declared spelling of `raw`, or `None` when the set does not allow it.
+    /// Language codes additionally accept the usual locale aliases (`zh_CN`,
+    /// `pt-BR`, `in`), because those are what a user copies from `$LANG`.
+    fn canonical(&self, values: &'static [&'static str], raw: &str) -> Option<&'static str> {
+        if let Some(found) = values
+            .iter()
+            .find(|value| value.eq_ignore_ascii_case(raw.trim()))
+        {
+            return Some(*found);
+        }
+        if self.id == Opt::Language {
+            let code = Lang::from_code(raw)?.code();
+            return values.iter().copied().find(|value| *value == code);
+        }
+        None
     }
 }
 
@@ -343,6 +438,16 @@ impl Config {
         self.get(id).as_int().unwrap_or_default()
     }
 
+    /// Interface language of the session. `auto` (the only non-literal value)
+    /// resolves through `$LC_ALL`/`$LC_MESSAGES`/`$LANG`; anything else is an
+    /// exact code from `Kind::Enum`. English when the row is somehow not text.
+    pub fn language(&self) -> Lang {
+        match self.get(Opt::Language) {
+            Value::Text(code) => Lang::resolve(code),
+            Value::Bool(_) | Value::Int(_) => Lang::default(),
+        }
+    }
+
     /// Live edit from the settings overlay. Validated like every other surface.
     pub fn set(&mut self, id: Opt, value: Value) -> Result<(), ValueError> {
         let value = row(id).validate(value)?;
@@ -382,11 +487,16 @@ mod tests {
         // without adding it to ALL_OPTS stops this file from building.
         for id in ALL_OPTS {
             match *id {
-                Opt::TabSize | Opt::CaseSensitive | Opt::Mouse | Opt::Syntax => {}
+                Opt::TabSize
+                | Opt::CaseSensitive
+                | Opt::Mouse
+                | Opt::Syntax
+                | Opt::Osc52
+                | Opt::Language => {}
             }
         }
         // Hand-maintained count: extend it together with ALL_OPTS.
-        assert_eq!(ALL_OPTS.len(), 4);
+        assert_eq!(ALL_OPTS.len(), 6);
     }
 
     #[test]
@@ -518,5 +628,66 @@ mod tests {
         assert_eq!(row(Opt::CaseSensitive).kind, Kind::Bool);
         assert_eq!(row(Opt::TabSize).default, Value::Int(8));
         assert_eq!(row(Opt::CaseSensitive).default, Value::Bool(false));
+    }
+
+    #[test]
+    fn copying_out_is_opt_in_and_has_no_nanorc_directive() {
+        // nano has no equivalent, so the nanorc reader must not claim one, and the
+        // default is off: a copy never stalls a slow tty unless asked to.
+        assert_eq!(row(Opt::Osc52).default, Value::Bool(false));
+        assert_eq!(row(Opt::Osc52).nanorc, None);
+        assert_eq!(row(Opt::Osc52).kind, Kind::Bool);
+    }
+
+    #[test]
+    fn an_enum_accepts_only_its_own_values_and_canonicalises_them() {
+        use crate::i18n::Lang;
+
+        let language = row(Opt::Language);
+        assert_eq!(language.parse("es"), Ok(Value::Text("es")));
+        // Declared spelling wins, so one `Value` per language.
+        assert_eq!(language.parse("ZH-HANS"), Ok(Value::Text("zh-Hans")));
+        assert_eq!(language.parse("zh_CN.UTF-8"), Ok(Value::Text("zh-Hans")));
+        assert_eq!(language.parse(" auto "), Ok(Value::Text("auto")));
+        assert!(language.parse("klingon").is_err());
+        assert!(language.validate(Value::Int(1)).is_err());
+        assert!(language.validate(Value::Bool(true)).is_err());
+        assert_eq!(language.default, Value::Text("en"));
+        // Every code the language table declares is accepted.
+        for code in crate::i18n::CODES {
+            assert!(language.parse(code).is_ok(), "{code}");
+        }
+        assert_eq!(
+            language.kind.values().map(|values| values.len()),
+            Some(Lang::COUNT + 1)
+        );
+    }
+
+    #[test]
+    fn the_language_option_resolves_to_a_language() {
+        use crate::i18n::Lang;
+
+        let defaults = Config::defaults();
+        assert_eq!(defaults.language(), Lang::En, "the default is English");
+
+        let mut config = Config::defaults();
+        assert_eq!(
+            config.set(Opt::Language, Value::Text("ja")),
+            Ok(()),
+            "a live change from the settings overlay"
+        );
+        assert_eq!(config.language(), Lang::Ja);
+
+        config.set(Opt::Language, Value::Text("auto")).unwrap();
+        assert!(Lang::ALL.contains(&config.language()));
+        assert!(config.set(Opt::Language, Value::Text("xx")).is_err());
+        assert_eq!(config.language(), Lang::detect());
+    }
+
+    #[test]
+    fn the_language_row_has_no_nanorc_directive() {
+        assert_eq!(row(Opt::Language).nanorc, None);
+        assert_eq!(row(Opt::Language).group, "Interface");
+        assert_eq!(row(Opt::Language).long, "language");
     }
 }

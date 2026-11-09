@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use crate::buffer::{
     Cursor, DEFAULT_TAB_WIDTH, Edit, History, Selection, SelectionMode, TextBuffer,
-    char_offset_for_column,
+    char_offset_for_column, line_visual_column,
 };
 
 /// Everything the editor can be told to do.
@@ -26,6 +26,21 @@ pub enum Action {
     Quit,
     /// `^S`. The app loop owns the file: it has the path and the encoding.
     Save,
+    /// `M-S`, or `^S` on a buffer with no name: ask for a path, then write.
+    SaveAs,
+    /// `^O`: ask for a path and open it in a new buffer.
+    OpenPath,
+    /// `^R`: re-read this buffer's file and replace its text.
+    Reload,
+    /// `M-I`: ask for a path and insert its text at the cursor.
+    InsertFile,
+    /// `^G` / `M-G`: ask for a line (and optional column) in this buffer.
+    Goto,
+    /// `M-X`: ask for a shell command, run it and insert its output.
+    Execute,
+    /// `^J`: re-wrap the paragraph, or the marked lines. The width is the
+    /// viewport's, so the app loop resolves it and calls [`Editor::justify`].
+    Justify,
     /// `^L` or a resize: force a repaint, change nothing.
     Redraw,
     /// `^F`: open the find prompt.
@@ -93,6 +108,10 @@ pub enum Action {
     Delete,
     MoveLeft,
     MoveRight,
+    /// `Ctrl+←`: to the start of the previous word.
+    MoveWordLeft,
+    /// `Ctrl+→`: to the start of the next word.
+    MoveWordRight,
     MoveUp,
     MoveDown,
     MoveLineStart,
@@ -186,6 +205,27 @@ impl Editor {
         self.history.break_group();
     }
 
+    /// Mark the buffer unsaved without editing it. Only the recovery restore uses
+    /// this: the text came from an earlier session and is not on disk yet.
+    pub fn set_dirty(&mut self, dirty: bool) {
+        self.dirty = dirty;
+        if dirty {
+            self.history.break_group();
+        }
+    }
+
+    /// Replace the whole text with what the disk holds now (`^R`). The old undo
+    /// history refers to ranges of text that no longer exists, so it is dropped:
+    /// a reload is a hard boundary, and the buffer is clean when it returns.
+    pub fn load(&mut self, text: &str) {
+        self.buffer = TextBuffer::from_text(text);
+        self.cursor.clamp(&self.buffer);
+        self.selection = None;
+        self.goal_col = None;
+        self.history.clear();
+        self.dirty = false;
+    }
+
     /// Place the cursor somewhere (goto, tests, click). Clamped to the buffer,
     /// and it drops the mark.
     pub fn set_cursor(&mut self, line: usize, col: usize) {
@@ -203,6 +243,15 @@ impl Editor {
             // overlay or search actions owned by `App`.
             Action::Quit
             | Action::Save
+            | Action::SaveAs
+            | Action::OpenPath
+            // Reload and insert-file read the disk, so the app loop owns them;
+            // `Editor::load` and `PasteText` are the halves it calls.
+            | Action::Reload
+            | Action::InsertFile
+            | Action::Goto
+            | Action::Execute
+            | Action::Justify
             | Action::Redraw
             | Action::OpenFind
             | Action::OpenPalette
@@ -238,6 +287,14 @@ impl Editor {
             }
             Action::MoveRight => {
                 self.move_right();
+                self.follow();
+            }
+            Action::MoveWordLeft => {
+                self.move_word_left();
+                self.follow();
+            }
+            Action::MoveWordRight => {
+                self.move_word_right();
                 self.follow();
             }
             Action::MoveUp => self.move_vertical(-1),
@@ -702,11 +759,155 @@ impl Editor {
         self.goal_col = None;
     }
 
+    /// `Ctrl+←`: back over the gap, then to the first char of the word. Crossing
+    /// a line break is a gap, as in nano.
+    fn move_word_left(&mut self) {
+        let mut index = self.cursor.char_index(&self.buffer);
+        while index > 0 && !self.buffer.char_at(index - 1).is_some_and(is_word) {
+            index -= 1;
+        }
+        while index > 0 && self.buffer.char_at(index - 1).is_some_and(is_word) {
+            index -= 1;
+        }
+        self.cursor = self.position(index);
+        self.goal_col = None;
+    }
+
+    /// `Ctrl+→`: out of the current word, then over the gap to the next word. A
+    /// cursor already in a gap skips it and lands on the word after it.
+    fn move_word_right(&mut self) {
+        let total = self.buffer.len_chars();
+        let mut index = self.cursor.char_index(&self.buffer);
+        while index < total && self.buffer.char_at(index).is_some_and(is_word) {
+            index += 1;
+        }
+        while index < total && !self.buffer.char_at(index).is_some_and(is_word) {
+            index += 1;
+        }
+        self.cursor = self.position(index);
+        self.goal_col = None;
+    }
+
+    /// `^J`: join the paragraph around the cursor (or the marked lines) and wrap it
+    /// to `width` cells, keeping the first line's indent. One undo group, and the
+    /// cursor lands at the start of the paragraph.
+    ///
+    /// Words are split on whitespace and rejoined with single spaces, so a wrapped
+    /// paragraph never keeps the ragged joins it came with. Line breaks inside a
+    /// paragraph are not data: that is what "justify" means here, as in nano.
+    pub fn justify(&mut self, width: usize) {
+        let (first, last) = self.paragraph_lines();
+        let indent: String = self
+            .buffer
+            .line_chars(first)
+            .take_while(|ch| ch.is_whitespace() && *ch != '\n' && *ch != '\r')
+            .collect();
+        let mut words: Vec<String> = Vec::new();
+        for line in first..=last {
+            words.extend(
+                self.buffer
+                    .line_chars(line)
+                    .collect::<String>()
+                    .split_whitespace()
+                    .map(str::to_string),
+            );
+        }
+        if words.is_empty() {
+            return;
+        }
+
+        let start = self.buffer.line_start(first);
+        let end = self.buffer.line_end(last);
+        let removed: String = (start..end)
+            .filter_map(|index| self.buffer.char_at(index))
+            .collect();
+        let wrapped = wrap(&indent, &words, width, self.tab_width);
+        if wrapped == removed {
+            return;
+        }
+
+        let before = self.cursor;
+        self.buffer.remove(start..end);
+        self.buffer.insert_str(start, &wrapped);
+        self.cursor = Cursor::new(first.min(self.buffer.line_count() - 1), 0);
+        self.cursor.clamp(&self.buffer);
+        self.selection = None;
+        self.touch();
+        self.history.record_group(
+            vec![Edit::replace(start, removed, &wrapped)],
+            before,
+            self.cursor,
+        );
+    }
+
+    /// Lines `justify` owns: the marked ones when there is a mark, otherwise the
+    /// contiguous non-blank block around the cursor.
+    fn paragraph_lines(&self) -> (usize, usize) {
+        if let Some(selection) = self.selection.filter(|selection| !selection.is_empty()) {
+            let (start, end) = selection.char_range(&self.buffer);
+            let (first, _) = self.buffer.char_to_position(start);
+            let (last, col) = self.buffer.char_to_position(end);
+            // A mark that ends at column 0 does not own that line.
+            let last = if col == 0 && last > first {
+                last - 1
+            } else {
+                last
+            };
+            return (first, last);
+        }
+        let cursor = self.cursor.line();
+        let blank = |line: usize| self.buffer.line_len(line) == 0;
+        let mut first = cursor;
+        while first > 0 && !blank(first - 1) {
+            first -= 1;
+        }
+        let mut last = cursor;
+        while last + 1 < self.buffer.line_count() && !blank(last + 1) {
+            last += 1;
+        }
+        (first, last)
+    }
+
     /// Any change to the text marks the buffer dirty and forgets the goal column.
     fn touch(&mut self) {
         self.dirty = true;
         self.goal_col = None;
     }
+}
+
+/// nano's word character: alphanumeric or underscore. Unicode letters count, so a
+/// word in Spanish or Japanese moves as one.
+fn is_word(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+/// Re-wrap `words` under `indent` to `width` cells, one space between words.
+///
+/// Width is measured in cells (`line_visual_column`), so CJK does not overflow the
+/// viewport, and tab stops use the editor's `tab_size`. A word wider than the
+/// limit stays whole instead of being split: no hyphenation, as in nano.
+fn wrap(indent: &str, words: &[String], width: usize, tab_width: usize) -> String {
+    let indent_cells = line_visual_column(indent.chars(), tab_width);
+    let limit = width.max(indent_cells + 1);
+    let mut out = String::from(indent);
+    let mut column = indent_cells;
+    for (index, word) in words.iter().enumerate() {
+        let cells = line_visual_column(word.chars(), tab_width);
+        if index == 0 {
+            out.push_str(word);
+            column += cells;
+        } else if column + 1 + cells > limit {
+            out.push('\n');
+            out.push_str(indent);
+            out.push_str(word);
+            column = indent_cells + cells;
+        } else {
+            out.push(' ');
+            out.push_str(word);
+            column += 1 + cells;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1072,5 +1273,140 @@ mod tests {
         editor.apply(Action::Paste);
         assert_eq!(plain(&editor), "x");
         assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn word_movement_stops_at_word_starts() {
+        let mut editor = editor("uno dos,tres");
+        editor.apply(Action::MoveWordRight);
+        assert_eq!(at(&editor), (0, 4), "start of the second word");
+        editor.apply(Action::MoveWordRight);
+        assert_eq!(at(&editor), (0, 8), "past the comma, at the next word");
+        editor.apply(Action::MoveWordRight);
+        assert_eq!(at(&editor), (0, 12), "end of the buffer");
+        editor.apply(Action::MoveWordLeft);
+        assert_eq!(at(&editor), (0, 8));
+        editor.apply(Action::MoveWordLeft);
+        assert_eq!(at(&editor), (0, 4));
+        editor.apply(Action::MoveWordLeft);
+        assert_eq!(at(&editor), (0, 0));
+    }
+
+    #[test]
+    fn word_movement_crosses_lines_and_ignores_punctuation() {
+        let mut wrapped = editor("uno\n  dos");
+        wrapped.set_cursor(0, 1);
+        wrapped.apply(Action::MoveWordRight);
+        assert_eq!(at(&wrapped), (1, 2), "the line break is a gap");
+        wrapped.apply(Action::MoveWordLeft);
+        assert_eq!(at(&wrapped), (0, 0));
+        // From inside a run of punctuation, right lands on the next word.
+        let mut punctuated = editor("a -- b");
+        punctuated.set_cursor(0, 3);
+        punctuated.apply(Action::MoveWordRight);
+        assert_eq!(at(&punctuated), (0, 5));
+    }
+
+    #[test]
+    fn word_movement_keeps_a_mark_and_handles_an_empty_buffer() {
+        let mut empty = editor("");
+        empty.apply(Action::MoveWordRight);
+        empty.apply(Action::MoveWordLeft);
+        assert_eq!(at(&empty), (0, 0));
+
+        let mut marked = editor("uno dos");
+        marked.set_cursor(0, 0);
+        marked.apply(Action::StartMark);
+        marked.apply(Action::MoveWordRight);
+        // The cursor lands on the next word's first char, so the mark covers the
+        // space it crossed: the range is half-open and honest about it.
+        assert_eq!(marked.selection().unwrap().text(marked.buffer()), "uno ");
+    }
+
+    #[test]
+    fn justify_joins_the_paragraph_around_the_cursor() {
+        let mut editor = editor("uno\ndos tres\n\nsiguiente");
+        editor.set_cursor(1, 4);
+        editor.justify(80);
+        assert_eq!(plain(&editor), "uno dos tres\n\nsiguiente");
+        assert_eq!(at(&editor), (0, 0));
+    }
+
+    #[test]
+    fn justify_wraps_at_the_given_width_and_keeps_the_indent() {
+        let mut editor = editor("  uno dos tres cuatro\n");
+        editor.justify(11);
+        assert_eq!(plain(&editor), "  uno dos\n  tres\n  cuatro\n");
+        assert_eq!(at(&editor), (0, 0));
+    }
+
+    #[test]
+    fn justify_wraps_by_cells_not_chars() {
+        let mut editor = editor("漢字 漢字 漢字");
+        editor.justify(9);
+        assert_eq!(plain(&editor), "漢字 漢字\n漢字");
+    }
+
+    #[test]
+    fn justify_is_one_undo_step_and_keeps_a_blank_line_untouched() {
+        let mut joined = editor("uno\ndos");
+        joined.justify(80);
+        assert_eq!(plain(&joined), "uno dos");
+        joined.apply(Action::Undo);
+        assert_eq!(plain(&joined), "uno\ndos");
+
+        let mut blank = editor("\n");
+        blank.justify(80);
+        assert_eq!(plain(&blank), "\n");
+        assert!(!blank.is_dirty());
+    }
+
+    #[test]
+    fn justify_uses_the_marked_lines_when_there_is_a_mark() {
+        // The mark is half-open, so ending at column 0 does not own that line.
+        let mut one_line = editor("uno\ndos\ntres\n");
+        one_line.set_cursor(0, 0);
+        one_line.apply(Action::StartMark);
+        one_line.apply(Action::MoveDown);
+        one_line.justify(80);
+        assert_eq!(plain(&one_line), "uno\ndos\ntres\n", "nothing to join");
+
+        // Extending into the second line justifies both.
+        let mut two_lines = editor("uno\ndos\ntres\n");
+        two_lines.set_cursor(0, 0);
+        two_lines.apply(Action::StartMark);
+        two_lines.apply(Action::MoveDown);
+        two_lines.apply(Action::MoveRight);
+        two_lines.justify(80);
+        assert_eq!(plain(&two_lines), "uno dos\ntres\n");
+    }
+
+    #[test]
+    fn set_dirty_marks_a_restored_buffer_without_editing_it() {
+        let mut editor = editor("recuperado\n");
+        assert!(!editor.is_dirty());
+        editor.set_dirty(true);
+        assert!(editor.is_dirty());
+        editor.set_dirty(false);
+        assert!(!editor.is_dirty());
+    }
+
+    #[test]
+    fn load_replaces_the_text_and_drops_the_history() {
+        let mut editor = editor("uno\ndos\n3\n4\n5\n6\n7\n");
+        editor.apply(Action::MoveFileEnd);
+        editor.apply(Action::Insert('!'));
+        assert!(editor.is_dirty());
+
+        editor.load("nuevo\n");
+
+        assert_eq!(plain(&editor), "nuevo\n");
+        assert!(!editor.is_dirty());
+        // The cursor is clamped into the shorter buffer, not left off the end.
+        assert!(editor.cursor().line() < editor.buffer().line_count());
+        assert!(editor.cursor().col() <= editor.buffer().line_len(editor.cursor().line()));
+        // The edit before the reload cannot be undone into the new text.
+        editor.apply(Action::Undo);
+        assert_eq!(plain(&editor), "nuevo\n");
     }
 }

@@ -27,7 +27,6 @@ impl Paths {
     pub fn detect() -> Self {
         Self::from_env(|name| std::env::var(name).ok())
     }
-
     /// Resolution against an injected environment, so the rules are testable
     /// without mutating the process (`edition 2024` makes `set_var` unsafe).
     pub fn from_env(get: impl Fn(&str) -> Option<String>) -> Self {
@@ -78,6 +77,25 @@ impl Paths {
     }
 }
 
+/// `$XDG_STATE_HOME/nnano`, falling back to `~/.local/state/nnano`. `None` when
+/// neither variable is set: then there is nowhere to write a recovery file.
+pub fn state_dir(get: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let home = get("HOME").filter(|value| !value.is_empty());
+    let state_home = get("XDG_STATE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            home.as_ref()
+                .map(|home| PathBuf::from(home).join(".local").join("state"))
+        });
+    state_home.map(|dir| dir.join("nnano"))
+}
+
+/// [`state_dir`] against the real environment.
+pub fn detect_state_dir() -> Option<PathBuf> {
+    state_dir(|name| std::env::var(name).ok())
+}
+
 fn read_toml(path: &Path) -> Layer {
     match read(path) {
         Ok(text) => from_toml(&origin(path), &text),
@@ -115,7 +133,6 @@ mod tests {
 
     use super::Paths;
     use crate::config::{Layer, Opt, Value};
-
     fn unique_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("nnano-config-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -239,5 +256,21 @@ mod tests {
         assert_eq!(config.warnings().len(), 1, "{:?}", config.warnings());
         assert!(config.warnings()[0].contains("cannot read"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_state_dir_follows_xdg_or_the_home_fallback() {
+        assert_eq!(
+            super::state_dir(env(&[
+                ("HOME", "/home/ada"),
+                ("XDG_STATE_HOME", "/home/ada/.state")
+            ])),
+            Some(PathBuf::from("/home/ada/.state/nnano"))
+        );
+        assert_eq!(
+            super::state_dir(env(&[("HOME", "/home/ada"), ("XDG_STATE_HOME", "")])),
+            Some(PathBuf::from("/home/ada/.local/state/nnano"))
+        );
+        assert_eq!(super::state_dir(env(&[])), None, "nowhere to write");
     }
 }

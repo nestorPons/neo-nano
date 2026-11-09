@@ -74,6 +74,11 @@ Search mirrors nano: it is **not incremental** (it runs when you accept the prom
 | Command palette | `Ctrl+P` | — |
 | Toggle syntax highlighting | `Alt+Y` | `Alt+Y` |
 | Refresh screen | `Ctrl+L` | `Ctrl+L` |
+| Interface language | `Alt+,` → Language | `--language <code>` |
+
+The palette (`Ctrl+P`) prints the key that runs each command on the right, and typing a key (`ctrl+q`) filters by shortcut. The help (`Ctrl+H`) and the palette are generated from the same keymap table the decoder reads, so they never advertise a key that does not work.
+
+The interface speaks ten languages: English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia and 日本語. Pick one in the settings overlay (`Alt+,` → Language) or with `--language es`; `language = "auto"` in `config.toml` follows `$LC_ALL`/`$LANG`.
 
 ## What changed from nano
 
@@ -104,3 +109,14 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, and the wheel scrolls without moving the cursor.
 - Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. "Replace all" is one undo step.
 - `Ctrl+H` opens the shortcut reference. Backspace is the terminal's Backspace key (`0x7F`): if your terminal sends `0x08` for Backspace, that key opens help — set it to send `0x7F`.
+
+## Prompts and the recovery file
+
+- `Alt+S` asks for a path, and so does `Ctrl+S` on a buffer with no name (`nnano -`, a fresh buffer, or a save-as that was cancelled). `Tab` completes the path in *Save as*, *Open* and *Insert file*; a single match fills it, several extend it to the common prefix.
+- `Alt+S` writes a new file and adopts its name: the buffer bar, the status bar and the syntax grammar follow it. A failed write leaves the old name in place.
+- `Alt+X` runs the line with `sh -c` and inserts its stdout at the cursor as one undo step; the status bar reports the exit code and the first line of stderr.
+- `Ctrl+R` re-reads this buffer's file from disk and replaces the text; the undo history of the old text is dropped. With unsaved changes it asks once (`Ctrl+R` again reloads, `Ctrl+S` saves).
+- `Alt+I` asks for a file and inserts its text at the cursor as one undo step; `Tab` completes the path. The buffer keeps its own name and encoding.
+- While a buffer has unsaved changes, nnano writes a recovery snapshot 2 s after the last edit under `$XDG_STATE_HOME/nnano/recovery/`. A crash or a killed SSH session is restored automatically on the next start (`recovered unsaved changes for …`); saving or a clean exit deletes it.
+- `Ctrl+C` and `Alt+6` always copy into the internal register. Enable the `osc52` option (`--osc52`) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar.
+- `Ctrl+J` re-wraps the paragraph around the cursor (or the marked lines) to the width of the text area, keeping the first line's indent. It is one undo step.

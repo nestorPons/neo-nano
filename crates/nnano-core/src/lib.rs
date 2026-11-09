@@ -5,7 +5,11 @@
 //! never exists.
 
 pub mod buffer;
+pub mod clipboard;
 pub mod config;
 pub mod editor;
+pub mod file;
+pub mod i18n;
+pub mod recovery;
 pub mod search;
 pub mod syntax;

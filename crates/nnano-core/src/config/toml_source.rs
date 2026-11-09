@@ -4,7 +4,7 @@
 //! `serde` derive, so a new option is a registry row and nothing else. Unknown
 //! keys and wrong types warn once each; neither aborts.
 
-use super::{Layer, Value, by_key};
+use super::{Layer, OptRow, Value, by_key};
 
 /// Parse `text` as the TOML layer named `origin`. Never fails: a broken file
 /// becomes one warning and contributes no values.
@@ -23,7 +23,7 @@ pub fn from_toml(origin: &str, text: &str) -> Layer {
             layer.warn(format!("unknown key `{key}`"));
             continue;
         };
-        let Some(value) = from_toml_value(entry) else {
+        let Some(value) = from_toml_value(row, entry) else {
             layer.warn(format!("`{key}` must be {}", row.kind.expected()));
             continue;
         };
@@ -36,12 +36,17 @@ pub fn from_toml(origin: &str, text: &str) -> Layer {
     layer
 }
 
-/// Only the two shapes the registry can hold. Arrays, tables, floats and
+/// The three shapes the registry can hold: booleans, integers and strings (an
+/// `Enum`, whose value the row must canonicalise). Arrays, tables, floats and
 /// datetimes are refused with the row's expected type.
-fn from_toml_value(value: &toml::Value) -> Option<Value> {
+fn from_toml_value(row: &OptRow, value: &toml::Value) -> Option<Value> {
     match value {
         toml::Value::Boolean(value) => Some(Value::Bool(*value)),
         toml::Value::Integer(value) => Some(Value::Int(*value)),
+        // `language = "es"`: only an `Enum` row takes a string, and the row owns
+        // the allowed set, so the value is parsed by the same code the CLI and
+        // `.nanorc` use. A string for a bool or an int stays a type error.
+        toml::Value::String(value) if row.kind.values().is_some() => row.parse(value).ok(),
         _ => None,
     }
 }
@@ -109,5 +114,30 @@ mod tests {
         let layer = from_toml("test.toml", "[editor]\ntab_size = 4\n");
         assert!(layer.values.is_empty());
         assert!(layer.warnings[0].contains("unknown key `editor`"));
+    }
+
+    #[test]
+    fn a_string_sets_an_enum_and_is_canonicalised() {
+        let layer = from_toml("test.toml", "language = \"es_ES\"\n");
+        assert!(layer.warnings.is_empty(), "{:?}", layer.warnings);
+        assert_eq!(layer.values, vec![(Opt::Language, Value::Text("es"))]);
+    }
+
+    #[test]
+    fn an_unknown_enum_value_warns_for_that_key_only() {
+        let layer = from_toml("test.toml", "language = \"xx\"\ntab_size = 2\n");
+        assert_eq!(layer.values, vec![(Opt::TabSize, Value::Int(2))]);
+        assert_eq!(layer.warnings.len(), 1);
+        assert!(
+            layer.warnings[0].contains("`language` must be"),
+            "{layer:?}"
+        );
+    }
+
+    #[test]
+    fn a_string_is_still_a_type_error_for_a_bool() {
+        let layer = from_toml("test.toml", "mouse = \"yes\"\n");
+        assert!(layer.values.is_empty());
+        assert!(layer.warnings[0].contains("must be true or false"));
     }
 }

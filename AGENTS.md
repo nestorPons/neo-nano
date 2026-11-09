@@ -4,13 +4,20 @@ Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simp
 
 ## Status (2026-11-06)
 - **Phases 6 and 7 done** (2026-11-06): mouse (click, drag, Alt+drag rectangle, wheel, `mouse` option), bracketed paste, internal clipboard with stream and rectangular selection, grouped undo/redo, replace with per-match confirmation, multiple buffers with a one-row buffer bar, and syntax highlighting from `.nanorc` grammars.
-- Registry rows: `tab_size`, `case_sensitive`, `mouse`, `syntax` — each wired to the CLI, TOML, `.nanorc` and the settings overlay by the same table.
-- Not yet: recovery file (2 s debounce), save-as (`M-S`), `^O` open-by-path, justify (`^J`), goto (`^G`/`M-G`), execute (`M-X`), word movement (`Ctrl+←/→`), OSC 52 copy out. `^S` still writes only when the buffer has a path.
+- **Save, open and the file prompts are complete** (2026-11-06): `^S` writes in place and `fsync`s, `M-S` (or `^S` on an unnamed buffer, `nnano -` included) asks for a path, `^O` opens by path with `Tab` completion, `^G`/`M-G` take `line[,column]` or `+N`/`-N`, `^J` justifies to the text width, `M-X` runs `sh -c` and inserts its output, `Ctrl+←/→` move by word.
+- **Recovery file done** (2026-11-06): a dirty buffer is snapshotted 2 s after the last edit under `$XDG_STATE_HOME/nnano/recovery/<hash of the absolute path>.swp`, restored on the next start, deleted on save, on close and on a clean exit.
+- **OSC 52 copy out done** (2026-11-06): opt-in through the `osc52` registry option, capped at 64 KiB with a visible warning; the internal register is still the storage.
+- Registry rows: `tab_size`, `case_sensitive`, `mouse`, `syntax`, `osc52`, `language` — each wired to the CLI, TOML, `.nanorc` (where nano has one) and the settings overlay by the same table.
+- **Ten interface languages** (2026-11-06): English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia, 日本語. `language` is the first `Kind::Enum` row (a cycling picker in the overlay); the strings live in one `nnano-tui::i18n` table keyed by the English source text, and a coverage test fails the build when a binding, command, option label or help note has no row.
+- **`^R` reload and `M-I` insert-file done** (2026-11-09): `^R` replaces the buffer with the file on disk (dirty buffers ask once; the old undo history is dropped, since its ranges name text that no longer exists; a missing or undecodable file changes nothing) and `M-I` inserts a file's text at the cursor as one undo step behind a path prompt that accepts `Tab`. Both are palette commands too, so the keymap table no longer advertises anything inert.
+- Still open: no LSP, no plugins, no packaging yet.
 - Undo is an operation log in **char** ranges (the rope indexes by char; storing bytes would need a snap-to-boundary on every line change). Groups close on a 400 ms pause, a word boundary, and hard boundaries (cut, paste, save, buffer switch); "replace all" merges into one group. No undo across runs.
 - Selection is half-open `[anchor, head)` in chars: "select all" is exactly the buffer, and a cursor at a line end selects nothing phantom. Block mode is `M-Z` or Alt+drag; copy is `^C`/`M-6`, cut `^X`, paste `^V`/`^U`, and `^K` cuts whole lines and accumulates.
 - Help is a floating, scrollable reference of every implemented binding (`^H` or `F1`, `↑↓`/`PgUp`/`PgDn`/wheel, `Esc`), and the status bar advertises `^H: help`.
+- `KEYMAP` in `term/input.rs` is the only place a key is named: `decode` is a lookup over it, `help.rs` renders it (so the reference is complete by construction), and the command palette prints each command's chord from `chord_for` and filters by it. Three tests hold that: every row decodes to its own action, no chord is declared twice, every binding belongs to a section.
 - Syntax is per line and stateless: earliest rule wins per char, only viewport lines are matched, and a line over 4096 chars is left plain. `start=`/`end=` multi-line rules, `header`, hex colours and unknown names (`pink`, `latte`) degrade instead of failing; the 40 distro grammars in `/usr/share/nano` load without a single warning. `M-Y` toggles the session, `syntax` sets the default.
 - Verified in a real pty (80x24, reconstructed screen): copy/paste round-trips and undoes; typing undoes and redoes; `^N`/`^W` add and close buffers with the bar; `M-R` replaces one match and replaces all; `M-Y` and `--no-syntax` remove the colour codes; a click sets the cursor; the wheel scrolls without moving the cursor and the next key re-attaches the view; a bracketed paste is one undo step; the settings overlay turns the mouse off at runtime; no grammar warning reaches stderr.
+- Verified in a real pty for the file prompts (2026-11-06): `M-S` writes and adopts the name, `^S` on `nnano -` asks for one, `^O` completes with `Tab` and loads the buffer bar, `^G` lands on `3:1` and `1,3`, `^J` wraps a 20-word paragraph to 80 cells, `M-X` inserts `eco` and reports `exit 3: boom`, `Ctrl+→`/`Ctrl+←` move word by word, OSC 52 stays silent until `--osc52`, and a recovery snapshot appears after 2 s, survives `SIGKILL`, is restored dirty on restart and disappears on save and on a clean exit.
 - All v1 decisions are closed: *Open items* is empty, and `DECISIONS.md` was deleted — `LOG.md` is the decision/change history.
 - Stack and architecture are already decided (see below) — do not relitigate them.
 - Always `ls` before editing; nothing can be assumed to exist.
@@ -45,12 +52,13 @@ Reading rule: where this section is silent, the recommendation is adopted as the
 | Tabs | **in** (already decided) | `^T` |
 | Plugins | never | out of scope by design, not a v1 gap |
 
-Each row that becomes an option costs one registry row, one overlay widget and four doc languages — count that before adding more.
+Each row that becomes an option costs one registry row, one overlay widget, one translation row per language and one doc row in ten languages — count that before adding more.
 
 ### Save: in place (decided 2026-11-04)
 
 - `^S` truncates and rewrites the file the user opened. Explicitly rejected: temp file + `rename` — it breaks hardlinks, replaces a symlink with a regular file and changes the inode other processes watch.
-- Order: open the real path with truncation → write → flush. One step, no copy.
+- Order: open the real path with truncation → write → flush → `fsync` (`2026-11-06`: `sync_all` is the second half of the promise; without it the bytes are only in the page cache when `^S` returns).
+- A Latin-1 buffer is **validated before opening** (`2026-11-06`): the whole buffer is scanned for a char above `U+00FF` first, because opening truncates and a refusal after that would destroy the file. One extra O(n) pass, only for Latin-1, is the price of keeping the in-place rule without a temp copy.
 - **No backup file** (decided 2026-11-04): nnano never writes `file~`. `backup` and `backupdir` are **not** registry options; a `.nanorc` `set backup` / `set backupdir` is accepted and ignored with the usual one startup warning, never an error.
 - `save as` to a different path creates that file normally; the in-place rule applies to overwriting a file that exists.
 - Consequence to accept: an interrupted write (crash, `ENOSPC`, killed SSH) leaves a truncated file with nothing beside it. The recovery file is the only net; never advertise atomic saves or a backup copy.
@@ -89,11 +97,19 @@ Each row that becomes an option costs one registry row, one overlay widget and f
 
 - **No multiple cursors**; **rectangular selection yes** (block range, `M-6` copy still applies).
 - **Undo grouped**: break on a 400 ms pause (fixed in v1), word boundary, and hard boundaries (`^K`, paste, save, buffer switch). Not per keystroke.
-- **Clipboard**: internal register always; OSC 52 opt-in, capped at 64 KiB per copy — above that, truncate with a visible warning rather than block on a slow SSH tty.
-- **Autosave off**; **recovery file on**: `$XDG_STATE_HOME/nnano/recovery/<hash of absolute path>.swp` (fallback `~/.local/state/nnano/recovery/`), written on a 2 s idle debounce once the buffer is dirty, never from the redraw cycle; deleted after a successful save and on a clean exit.
+- **Clipboard**: internal register always; OSC 52 opt-in, capped at 64 KiB per copy — above that, truncate with a visible warning rather than block on a slow SSH tty. Implementation (2026-11-06): the `osc52` registry option (off by default, no nanorc equivalent), base64 written in `nnano-core::clipboard` (no new dependency), sequence written to stdout on `^C`/`M-6` only.
+- **Autosave off**; **recovery file on**: `$XDG_STATE_HOME/nnano/recovery/<hash of absolute path>.swp` (fallback `~/.local/state/nnano/recovery/`), written on a 2 s idle debounce once the buffer is dirty, never from the redraw cycle; deleted after a successful save and on a clean exit. Implementation (2026-11-06): `nnano-core::recovery` owns the path, the header (`nnano-recovery v1`, absolute path, body encoding) and the write-through-temp-then-rename, so a torn snapshot cannot shadow a good one; the body keeps the buffer's encoding, so Latin-1 round-trips, and falls back to UTF-8 when the buffer holds a char Latin-1 cannot encode. A snapshot is restored **automatically** on the next start when it differs from the file on disk, and the buffer comes back dirty (`recovered unsaved changes for …`); a snapshot identical to the file is deleted instead. Recovery is disabled when there is no state directory, and tests never touch it.
 - **Colours**: no truecolor and no theme files in v1; the default style is the terminal's own foreground/background plus the semantic colour enum.
 - **Encoding**: detect and warn only. Saving never transcodes; a Latin-1 file round-trips byte-identical. Implementation (2026-11-05): UTF-8 when the bytes parse as UTF-8, otherwise Latin-1 read as the byte→`U+00NN` bijection so every byte survives; a UTF-16 BOM is refused, never guessed; a UTF-8 BOM stays in the text as `U+FEFF`. Saving a Latin-1 buffer stops at the first char outside `U+0000..=U+00FF` with an error instead of replacing it.
-- **`nnano -`**: reads stdin into an ephemeral buffer; saving requires a filename (stdin is not seekable, so there is no in-place save).
+- **`nnano -`**: reads stdin into an ephemeral buffer; saving requires a filename (stdin is not seekable, so there is no in-place save). Implemented (2026-11-06): `^S` with no path opens the same *Save as* prompt `M-S` does, so the buffer only needs a name once.
+- **`^O` completion** (2026-11-06): one path component deep, as a shell: the text up to the last `/` is the directory, the rest is the prefix; directories get a trailing `/`, dotfiles only complete after a dot, one candidate fills the line, several extend it to the common prefix. No listing widget, no filesystem walk beyond one `read_dir`.
+
+### Justify, goto, execute, word movement (decided 2026-11-06)
+
+- **`^J` justify**: the paragraph around the cursor, or the marked lines when there is a mark. The width is the **text area's**, resolved by the app loop (`Action::Justify` → `Editor::justify(width)`), so the editor never knows the screen. Words are split on whitespace and rejoined with single spaces, the first line's indent is kept, wrapping is measured in cells (CJK-safe), a word wider than the limit is not hyphenated, and the whole rewrite is one undo group. No `fill` option in v1.
+- **`^G` / `M-G` goto**: `line`, `line,column` or `line:column`, one-based; `+N`/`-N` are relative to the current line. Out-of-range values are clamped, a non-numeric one is reported and changes nothing.
+- **`M-X` execute**: run the line with `sh -c`, insert its stdout at the cursor as one undo step, report the exit code and the first stderr line in the status bar. No terminal handoff, no pager, no `$SHELL` lookup, no shell configuration in v1 — one command, one insertion.
+- **Word movement**: `Ctrl+←`/`Ctrl+→` stop at word starts, where a word char is alphanumeric or `_` (Unicode letters count); a line break is a gap, so movement crosses lines.
 
 ## Keymap: desktop-first (decided 2026-11-04)
 
@@ -122,13 +138,13 @@ Desktop wins every collision; non-colliding nano bindings are kept. No legacy pr
 Kept unchanged (no collision): `^K` cut line, `^U` paste alias, `^E` end of line, `^D` delete char, `^J` justify, `^L` refresh, `^B` back char, `^\` replace, `M-U`/`M-E` undo/redo, `M-A` mark, `M-6` copy, `M-G` goto, `M-\`/`M-/` first/last line, `M-W` find next, `M-B` find backwards, `M-C` case toggle, `M-R` regexp toggle, `M-Y` syntax highlighting toggle.
 `^K` + `^U` are the pair worth defending: they are nano's identity and collide with nothing.
 
-Added with the keymap: `M-S` save as, `M-,` settings menu, `F3`/`Shift+F3` find next/previous.
+Added with the keymap: `M-S` save as, `M-,` settings menu, `F3`/`Shift+F3` find next/previous, `Ctrl+←`/`Ctrl+→` word movement.
 
 Prompt-scoped keys are modal, as in nano: inside the find/replace prompt `M-C` / `M-R` / `M-B` toggle case / regexp / backwards, while outside a prompt `M-R` opens Replace. Same key, different mode — not a collision.
 
-User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja). A keymap change means editing all four.
+User-facing keymap reference: `docs/<lang>/shortcuts.md` (en, es, zh-Hans, ja, hi, ar, fr, bn, pt, id). A keymap change means editing all ten.
 
-Implemented rows (2026-11-06): `term/input.rs` decodes movement (arrows, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace`/`^?`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `^F`, `^P`, `M-,`, `^H`/`F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^\`, `M-Y`, and the editing block: `^A`, `^C`, `^V`/`^U`, `^X`, `^K`, `^Z`, `^Y`, `M-A`, `M-6`, `M-U`, `M-E`, `M-Z`, `^N`, `^T`, `^W`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands.
+Implemented rows (2026-11-09): `term/input.rs` decodes movement (arrows, `Ctrl+←`/`Ctrl+→`, `Home`/`End`, `PgUp`/`PgDn`, `M-↑`/`M-↓`), typing (`Enter`, `Tab`, printable chars), deletion (`Backspace`/`^?`, `Delete`), `^B`, `^D`, `^E`, `^L`, `^Q`, `^S`, `M-S`, `^O`, `^R`, `M-I`, `^G`/`M-G`, `^J`, `^F`, `^P`, `M-,`, `M-X`, `^H`/`F1`, `Esc`, `M-W`/`F3`, `M-B`/`Shift+F3`, `M-C`, `M-R`, `^\`, `M-Y`, and the editing block: `^A`, `^C`, `^V`/`^U`, `^X`, `^K`, `^Z`, `^Y`, `M-A`, `M-6`, `M-U`, `M-E`, `M-Z`, `^N`, `^T`, `^W`. Every other row decodes to `None` — not to a no-op action — and `input.rs` asserts that deferred list, so a row only starts working when its feature lands. The deferred list is down to `M-Q`; every binding the docs name is live.
 
 `M-C`, `M-R` and `M-B` are modal by interpretation: they decode everywhere, the find/replace prompt acts on them, and outside a prompt `M-R` opens Replace and `M-B` repeats the search backwards. `Enter` (`Newline`) confirms inside a prompt or a panel; `Esc` (`Cancel`) closes an overlay and clears the mark.
 
@@ -188,8 +204,8 @@ Speed and startup latency are product requirements, not nice-to-haves: weigh eve
 
 | Crate | Contents | Depends on |
 |---|---|---|
-| `nnano-core` | rope buffer, cursor/selection, undo/redo, nano operations, search, config model + option registry | no TUI crate; `ropey`, `regex-lite`, `unicode-width`, `unicode-segmentation`, `toml` |
-| `nnano-tui` | `term/`, `ui/`, overlays, keymap, mouse regions | `nnano-core`, `ratatui`, `crossterm` |
+| `nnano-core` | rope buffer, cursor/selection, undo/redo, nano operations, search, config model + option registry, file I/O, recovery snapshot, OSC 52 | no TUI crate; `ropey`, `regex-lite`, `unicode-width`, `unicode-segmentation`, `toml` |
+| `nnano-tui` | `term/`, `ui/`, overlays, keymap, mouse regions, interface translations | `nnano-core`, `ratatui`, `crossterm` |
 | `nnano` | `main.rs` only: clap args → config → terminal init → `App::run` | `nnano-tui`, `nnano-core`, `clap` |
 
 Rules:
@@ -238,27 +254,40 @@ crates/
   nnano-core/src/
     lib.rs          public API + re-exports
     buffer/         rope, cursor, selection, undo/redo, grapheme map
-    editor/         nano operations (^K/^U, justify, replace, goto)
+    editor/         nano operations (^K/^U, justify, replace, goto, word movement)
     search.rs       nano search semantics (literal + ERE, wrap, case)
     syntax.rs       nanorc syntax parser + per-line span matcher
     config/         registry, Config + layers, toml_source, nanorc, paths
+    file.rs         in-place save (truncate → write → flush → fsync), completion
+    recovery.rs     snapshot path, header, encode/decode, write/load/remove
+    clipboard.rs    base64 + OSC 52 sequence, 64 KiB cap
+    i18n.rs         Lang enum, language codes, $LC_ALL/$LANG detection
   nnano-tui/src/
-    lib.rs          App::run + App state (config, overlay, find)
+    lib.rs          App::run + App state (config, overlay, find, recovery clock)
     term/           raw mode, restore, panic hook, caps, input
+    i18n/           translations: Lang columns, chrome.rs, keys.rs, t()/tf()
     ui/             status, compose_line, viewport, text
-    ui/overlays/    Overlay enum, find prompt, settings, palette, help, prompt
+    ui/overlays/    Overlay enum, find/line prompts, settings, palette, help, prompt
   nnano/src/
     main.rs         args -> config -> terminal init -> App::run
 ```
+
+`file`/`recovery`/`clipboard` live in `nnano-core` on purpose (`2026-11-06`): the
+truncate-write-flush-sync order, the Latin-1 refusal, the snapshot format and the
+OSC 52 cap are all testable without a TTY, and the TUI keeps only the decisions it
+owns (which buffer, which message). Moving the old `save_in_place` out of
+`nnano-tui/src/lib.rs` is what made the Latin-1 truncation bug visible.
 
 ### Event loop
 
 ```text
 poll(16ms) -> drain events -> apply Action -> if dirty: draw -> diff
+                              \-> snapshot when the 2 s recovery clock is due
 ```
 
 - `Action` enum is the only mutation path: keyboard, mouse and command palette all produce it, so `^S` and the settings overlay cannot drift.
 - Draw only when `dirty`; no fixed tick. Cursor blink optional, off by default.
+- The recovery snapshot is written from the **idle path** of the loop (`flush_recovery(now)`), never from `draw`, and only when the buffer is dirty; every edit re-arms a 2 s debounce (`2026-11-06`).
 - `Viewport::Fullscreen` only; `Viewport::Inline` rejected (nano always owns the screen).
 - One thread; a worker thread is allowed later for slow I/O or search, via channel.
 
@@ -350,6 +379,7 @@ That test is what enforces "dual configuration".
 5. **Done (2026-11-06).** Overlays: settings (config mirror), command palette, find (nano prompt semantics), help; option registry and layered config behind them.
 6. **Done (2026-11-06).** Mouse: selection, scroll, panel row clicks; bracketed paste; rectangular selection.
 7. **Done (2026-11-06).** Undo/redo (grouped), replace, tabs (buffers), syntax highlighting (nano `.nanorc` model); `docs/{en,es,zh-Hans,ja}/shortcuts.md` updated with `M-Z` and the mouse/undo notes.
+8. **Done (2026-11-06).** Save-as, `^O` open-by-path with completion, `^G` goto, `^J` justify, `M-X` execute, `Ctrl+←/→` word movement, `fsync` after `^S`, the recovery file and OSC 52 copy out; the Latin-1 truncation bug fixed; settings panel height fixed.
 
 ### Open items
 
@@ -366,6 +396,8 @@ Closed decisions:
 | Rope crate + chunking | `ropey`, byte chunks |
 | `file~` backup | removed from scope |
 | Recovery, OSC 52, undo, colours | defaults recorded in *Other adopted defaults* |
+| Save-as, `^O`, `^G`, `^J`, `M-X`, word movement (2026-11-06) | implemented as described in the keymap table, *Save: in place* and *Justify, goto, execute, word movement* |
+| `^R` reload, `M-I` insert-file (2026-11-09) | implemented: reload replaces the buffer and drops the undo history, dirty buffers ask once; insert-file is one undo step behind a completing prompt |
 | Option surfaces (2026-11-05) | runtime registry: clap **builder** + `toml::Table`, no `derive`, no codegen (see *Option registry*) |
 | `^H` (2026-11-05) | Backspace alias in `input.rs`, never Replace — documented in *Terminal constraints* |
 | Version pinning (2026-11-05) | exact `=x.y.z` for every dependency, manifests included (see *Dependencies*) |
@@ -380,7 +412,8 @@ Closed decisions:
 
 ## Language policy
 - **AI-facing docs in English** (this file, `LOG.md`, design notes, ADRs).
-- **User-facing docs in en, es, zh-Hans, ja** under `docs/<lang>/`; keep all four in sync when editing.
+- **User-facing docs in en, es, zh-Hans, ja, hi, ar, fr, bn, pt, id** under `docs/<lang>/`; keep all ten in sync when editing.
+- **Interface strings are translated, key names are not**: `Ctrl+S`, `Alt+,` and file paths stay as typed in every language. A new user-visible string goes into `nnano-tui::i18n` with one column per language; `t()` falls back to English so a missing row degrades instead of breaking the UI.
 - Code, identifiers, commit messages, CLI help: English.
 
 ## Inherited rules

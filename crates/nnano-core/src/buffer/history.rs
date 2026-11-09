@@ -145,6 +145,15 @@ impl History {
         self.opened_at = None;
     }
 
+    /// Drop every group. Used when the text is replaced wholesale (reload): the
+    /// stored ranges belong to a buffer that no longer exists.
+    pub fn clear(&mut self) {
+        self.done.clear();
+        self.undone.clear();
+        self.open = None;
+        self.opened_at = None;
+    }
+
     /// Undo the newest group; returns the cursor to restore.
     pub fn undo(&mut self, buffer: &mut TextBuffer) -> Option<Cursor> {
         self.close();

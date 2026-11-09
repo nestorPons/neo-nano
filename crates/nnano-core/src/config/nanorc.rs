@@ -73,7 +73,9 @@ fn unset(layer: &mut Layer, name: Option<&str>) {
     };
     match row.kind {
         super::Kind::Bool => layer.values.push((row.id, super::Value::Bool(false))),
-        super::Kind::Int { .. } => layer.warn(format!("`{name}` takes a value; use `set`")),
+        super::Kind::Int { .. } | super::Kind::Enum(_) => {
+            layer.warn(format!("`{name}` takes a value; use `set`"));
+        }
     }
 }
 

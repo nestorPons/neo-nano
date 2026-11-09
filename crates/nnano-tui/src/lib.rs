@@ -11,27 +11,28 @@
 //! viewport and undo history. There is still one viewport on screen; a one-row
 //! buffer bar appears when more than one buffer is open.
 
+pub mod i18n;
 pub mod term;
 pub mod ui;
 
-use std::fs::OpenOptions;
 use std::io;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use nnano_core::buffer::{
-    DEFAULT_TAB_WIDTH, EncodeError, Encoding, Selection, TextBuffer, encoding,
-};
-use nnano_core::config::{Config, Opt};
+use nnano_core::buffer::{DEFAULT_TAB_WIDTH, Encoding, Selection, encoding};
+use nnano_core::config::{self, Config, Opt};
 use nnano_core::editor::{Action, Editor};
 use nnano_core::search::{Direction, Search};
 use nnano_core::syntax::{self, Span as SyntaxSpan, SyntaxSet};
+use nnano_core::{clipboard, file, recovery};
 
+use crate::i18n::{Lang, t, tf};
 use crate::term::Caps;
+use crate::ui::overlays::line::Kind;
 use crate::ui::overlays::replace::{Replace, Stage};
-use crate::ui::overlays::{FindSettings, Help, Overlay, Palette, Prompt, Settings};
+use crate::ui::overlays::{FindSettings, Help, Line, Overlay, Palette, Prompt, Settings};
 use crate::ui::viewport::Viewport;
 
 /// Event-poll granularity. It is not a redraw rate: a frame is drawn only when
@@ -56,7 +57,10 @@ pub struct Document {
 impl Document {
     fn empty(name: &str) -> Self {
         Self {
-            file: label(name),
+            // The raw name on purpose: the *display* name of an unnamed buffer is
+            // translated at render time, so switching the interface language
+            // does not have to rewrite every `Document`.
+            file: name.to_string(),
             path: None,
             encoding: Encoding::Utf8,
             grammar: None,
@@ -85,9 +89,10 @@ impl Document {
     }
 }
 
-fn label(name: &str) -> String {
+/// Display name of a buffer: the file name, or the translated "no name" label.
+fn display_name(name: &str, lang: Lang) -> String {
     if name.is_empty() {
-        "[No Name]".to_string()
+        t(lang, "[No Name]").to_string()
     } else {
         name.to_string()
     }
@@ -108,6 +113,8 @@ pub struct App {
     confirm_quit: bool,
     /// `^W` was pressed once on a dirty buffer and is waiting for a second press.
     confirm_close: bool,
+    /// `^R` was pressed once on a dirty buffer and is waiting for a second press.
+    confirm_reload: bool,
     /// Effective options: the same values the CLI, TOML and nanorc layers
     /// produced, kept live so the settings overlay cannot drift.
     config: Config,
@@ -125,6 +132,14 @@ pub struct App {
     /// Whether the next frame must scroll to keep the cursor visible. The wheel
     /// turns it off so scrolling the view does not get undone by the cursor.
     follow_cursor: bool,
+    /// Where snapshots go (`<state>/nnano/recovery`). `None` disables the
+    /// recovery file entirely: tests and a `HOME`-less environment must not
+    /// write anything.
+    recovery_dir: Option<PathBuf>,
+    /// When the next snapshot is due. Set by every edit, cleared when it is
+    /// written or when the buffer becomes clean: a 2 s idle debounce, never a
+    /// timer in the redraw path.
+    recovery_due: Option<Instant>,
 }
 
 impl App {
@@ -150,6 +165,7 @@ impl App {
             message: None,
             confirm_quit: false,
             confirm_close: false,
+            confirm_reload: false,
             config,
             overlay: None,
             find: FindSettings::default(),
@@ -157,6 +173,8 @@ impl App {
             syntax: SyntaxSet::new(),
             syntax_enabled: true,
             follow_cursor: true,
+            recovery_dir: None,
+            recovery_due: None,
         };
         app.sync_editors();
         app
@@ -173,7 +191,11 @@ impl App {
                 Document::from_bytes("[stdin]", None, &bytes)?
             }
             Some(name) => {
-                let path = PathBuf::from(name);
+                // Absolute from the start: the recovery file is keyed by the
+                // absolute path, and `^S` must write where the user meant even if
+                // the process changes directory (it never does, but the hash must
+                // be stable across runs).
+                let path = file::absolute(name).unwrap_or_else(|_| PathBuf::from(name));
                 match std::fs::read(&path) {
                     Ok(bytes) => Document::from_bytes(name, Some(path), &bytes)?,
                     Err(err) if err.kind() == io::ErrorKind::NotFound => Document {
@@ -186,7 +208,10 @@ impl App {
         };
         let mut app = Self::from_docs(vec![doc]);
         if app.document().encoding == Encoding::Latin1 {
-            app.inform("read as Latin-1 (not UTF-8); saving keeps the same bytes");
+            app.inform(t(
+                app.lang(),
+                "read as Latin-1 (not UTF-8); saving keeps the same bytes",
+            ));
         }
         Ok(app)
     }
@@ -203,6 +228,12 @@ impl App {
     /// Adopt the loaded grammars and resolve each open buffer's grammar by name.
     pub fn apply_syntax(&mut self, syntax: SyntaxSet) {
         self.syntax = syntax;
+        self.resolve_grammar();
+    }
+
+    /// Re-select every buffer's grammar from the loaded set. The name is what
+    /// decides, so a save-as to another extension changes the colours.
+    fn resolve_grammar(&mut self) {
         for document in &mut self.docs {
             document.grammar = self
                 .syntax
@@ -250,6 +281,9 @@ impl App {
             // capture state is synced every tick; `set_mouse` is a no-op when it
             // already matches.
             session.set_mouse(self.config.bool(Opt::Mouse))?;
+            // A snapshot is due 2 s after the last edit. It is checked here, on
+            // the idle path, and never from the redraw cycle.
+            self.flush_recovery(Instant::now());
             if self.redraw {
                 let size = session.terminal().size()?;
                 self.screen = (size.width, size.height);
@@ -281,6 +315,9 @@ impl App {
                 _ => {}
             }
         }
+        // A clean exit owns no snapshots: the buffers were saved or the user
+        // accepted losing them. Anything left (a panic, a kill) stays on disk.
+        self.forget_all_recovery();
         Ok(())
     }
 
@@ -288,6 +325,7 @@ impl App {
     fn apply(&mut self, action: Action) {
         let confirming_quit = std::mem::take(&mut self.confirm_quit);
         let confirming_close = std::mem::take(&mut self.confirm_close);
+        let confirming_reload = std::mem::take(&mut self.confirm_reload);
         self.message = None;
         // Any key or click re-attaches the view to the cursor; the wheel is the
         // one action that scrolls without it.
@@ -295,6 +333,9 @@ impl App {
 
         if self.overlay.is_some() {
             self.apply_overlay(action, confirming_quit);
+            // An overlay can still edit the buffer (replace), so the snapshot
+            // clock is re-armed here too, not only on the editor path.
+            self.schedule_recovery(Instant::now());
             self.redraw = true;
             return;
         }
@@ -302,12 +343,31 @@ impl App {
         match action {
             Action::Quit => self.request_quit(confirming_quit),
             Action::Save => self.save(),
+            Action::SaveAs => self.overlay = Some(Overlay::Line(Line::new(Kind::SaveAs))),
+            Action::OpenPath => self.overlay = Some(Overlay::Line(Line::new(Kind::Open))),
+            Action::InsertFile => {
+                self.overlay = Some(Overlay::Line(Line::new(Kind::InsertFile)));
+            }
+            Action::Reload => self.reload(confirming_reload),
+            Action::Goto => self.overlay = Some(Overlay::Line(Line::new(Kind::Goto))),
+            Action::Execute => self.overlay = Some(Overlay::Line(Line::new(Kind::Execute))),
+            Action::Justify => {
+                let width = self.body_width();
+                self.editor_mut().justify(width);
+            }
+            // Copy is the one edit that may leave the process: OSC 52 is opt-in.
+            Action::Copy => {
+                self.editor_mut().apply(Action::Copy);
+                self.copy_out();
+            }
             Action::NewBuffer | Action::NewTab => self.new_buffer(),
             Action::CloseBuffer => self.close_buffer(confirming_close),
             Action::SwitchBuffer(index) => self.switch_to(index),
             Action::OpenFind => self.overlay = Some(Overlay::Find(self.find.open())),
             Action::OpenReplace => self.overlay = Some(Overlay::Replace(Replace::new(&self.find))),
-            Action::OpenPalette => self.overlay = Some(Overlay::Palette(Palette::new())),
+            Action::OpenPalette => {
+                self.overlay = Some(Overlay::Palette(Palette::new(self.lang())));
+            }
             Action::OpenSettings => self.overlay = Some(Overlay::Settings(Settings::new())),
             Action::OpenHelp => self.overlay = Some(Overlay::Help(Help::new())),
             Action::FindNext => self.repeat_find(Direction::Forward),
@@ -322,8 +382,12 @@ impl App {
             Action::ToggleRegexp => self.overlay = Some(Overlay::Replace(Replace::new(&self.find))),
             Action::ToggleSyntax => {
                 self.syntax_enabled = !self.syntax_enabled;
-                let state = if self.syntax_enabled { "on" } else { "off" };
-                self.inform(format!("syntax highlighting {state}"));
+                let state = if self.syntax_enabled {
+                    "syntax highlighting on"
+                } else {
+                    "syntax highlighting off"
+                };
+                self.inform(t(self.lang(), state));
             }
             Action::ScrollView(delta) => self.scroll(delta),
             // Pages are the only actions that need viewport geometry.
@@ -337,6 +401,7 @@ impl App {
             }
             other => self.editor_mut().apply(other),
         }
+        self.schedule_recovery(Instant::now());
         self.redraw = true;
     }
 
@@ -355,6 +420,11 @@ impl App {
         }
         if let Some(Overlay::Replace(replace)) = &mut self.overlay
             && replace.edits(&action)
+        {
+            return;
+        }
+        if let Some(Overlay::Line(line)) = &mut self.overlay
+            && line.edit(action.clone())
         {
             return;
         }
@@ -495,6 +565,24 @@ impl App {
                     self.overlay = Some(Overlay::Replace(replace));
                 }
             }
+            Overlay::Line(mut line) => {
+                let keep = match action {
+                    Action::Cancel => false,
+                    Action::Newline => self.accept_line(&line),
+                    Action::InsertTab if line.kind.completes() => {
+                        self.complete_path(&mut line);
+                        true
+                    }
+                    Action::Quit => {
+                        self.request_quit(confirming);
+                        false
+                    }
+                    _ => true,
+                };
+                if keep {
+                    self.overlay = Some(Overlay::Line(line));
+                }
+            }
         }
     }
 
@@ -505,11 +593,11 @@ impl App {
             Stage::Search => {
                 let query = replace.search_text().to_string();
                 if query.is_empty() {
-                    self.inform("empty search pattern");
+                    self.inform(t(self.lang(), "empty search pattern"));
                     return true;
                 }
                 if let Err(err) = Search::compile(&query, replace.regexp, replace.case_sensitive) {
-                    self.inform(format!("invalid pattern: {err}"));
+                    self.inform(tf(self.lang(), "invalid pattern: {}", &[&err.to_string()]));
                     return true;
                 }
                 self.find.query = query;
@@ -537,7 +625,7 @@ impl App {
         {
             Ok(search) => search,
             Err(err) => {
-                self.inform(format!("invalid pattern: {err}"));
+                self.inform(tf(self.lang(), "invalid pattern: {}", &[&err.to_string()]));
                 return false;
             }
         };
@@ -564,9 +652,9 @@ impl App {
         match replace.replaced() {
             0 => {
                 let query = self.find.query.clone();
-                self.inform(format!("not found: {query}"));
+                self.inform(tf(self.lang(), "not found: {}", &[&query]));
             }
-            count => self.inform(format!("replaced {count}")),
+            count => self.inform(tf(self.lang(), "replaced {}", &[&count.to_string()])),
         }
     }
 
@@ -599,7 +687,7 @@ impl App {
         {
             Ok(search) => search,
             Err(err) => {
-                self.inform(format!("invalid pattern: {err}"));
+                self.inform(tf(self.lang(), "invalid pattern: {}", &[&err.to_string()]));
                 return false;
             }
         };
@@ -624,7 +712,7 @@ impl App {
         self.editor_mut().merge_undo_groups(count);
         replace.set_active(None);
         let total = replace.replaced() + count;
-        self.inform(format!("replaced {total}"));
+        self.inform(tf(self.lang(), "replaced {}", &[&total.to_string()]));
         false
     }
 
@@ -632,25 +720,501 @@ impl App {
     fn request_quit(&mut self, confirming: bool) {
         if self.any_dirty() && !confirming {
             self.confirm_quit = true;
-            self.inform("unsaved changes: ^Q again to quit, ^S to save");
+            self.inform(t(
+                self.lang(),
+                "unsaved changes: ^Q again to quit, ^S to save",
+            ));
         } else {
             self.quit = true;
         }
     }
 
-    /// `^S`. Writes the active buffer in place when it has a path.
+    /// `^S`. Writes the active buffer in place when it has a path; with no path
+    /// (`nnano -`, a fresh buffer, a save that was cancelled) it asks for one
+    /// instead of refusing: save-as is the only way out, so it opens it.
     fn save(&mut self) {
-        let Some(path) = self.document().path.clone() else {
-            self.inform("no filename yet: save-as is not implemented");
+        if self.document().path.is_none() {
+            self.overlay = Some(Overlay::Line(Line::new(Kind::SaveAs)));
             return;
+        }
+        match self.write_active() {
+            Ok(path) => {
+                let path = path.display().to_string();
+                self.inform(tf(self.lang(), "saved {}", &[&path]));
+            }
+            Err(err) => self.inform(tf(self.lang(), "save failed: {}", &[&err.to_string()])),
+        }
+    }
+
+    /// `M-S`: write to a new path and adopt it. The file is written before the
+    /// buffer is renamed: a failed save must not leave the editor pointing at a
+    /// path it never wrote.
+    fn save_as(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.inform(t(self.lang(), "no file name given"));
+            return;
+        }
+        let path = match file::absolute(name) {
+            Ok(path) => path,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot resolve {}: {}",
+                    &[name, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        if path.is_dir() {
+            self.inform(tf(
+                self.lang(),
+                "{} is a directory",
+                &[&path.display().to_string()],
+            ));
+            return;
+        }
+        match self.write_active_as(&path) {
+            Ok(()) => {
+                let path = path.display().to_string();
+                self.inform(tf(self.lang(), "saved {}", &[&path]));
+            }
+            Err(err) => self.inform(tf(self.lang(), "save failed: {}", &[&err.to_string()])),
+        }
+    }
+
+    /// Write the active buffer to the path it already has. The snapshot is dropped
+    /// only after the bytes landed.
+    fn write_active(&mut self) -> io::Result<PathBuf> {
+        let Some(path) = self.document().path.clone() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "this buffer has no file name",
+            ));
         };
         let encoding = self.document().encoding;
-        match save_in_place(&path, self.editor().buffer(), encoding) {
-            Ok(()) => {
-                self.editor_mut().mark_saved();
-                self.inform(format!("saved {}", path.display()));
+        file::write_in_place(&path, self.editor().buffer(), encoding)?;
+        self.editor_mut().mark_saved();
+        self.forget_recovery(&path);
+        Ok(path)
+    }
+
+    /// Write to `path` and make it the buffer's file: name, grammar and undo
+    /// boundary all follow, and the snapshot of the old name is dropped because
+    /// the text is on disk now.
+    fn write_active_as(&mut self, path: &Path) -> io::Result<()> {
+        let encoding = self.document().encoding;
+        file::write_in_place(path, self.editor().buffer(), encoding)?;
+        let old = self.document().path.clone();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let grammar = self
+            .syntax
+            .select(&name)
+            .map(|grammar| grammar.name.clone());
+        let document = self.document_mut();
+        document.path = Some(path.to_path_buf());
+        document.file = name;
+        document.grammar = grammar;
+        document.editor.mark_saved();
+        if let Some(old) = old.filter(|old| old != path) {
+            self.forget_recovery(&old);
+        }
+        self.forget_recovery(path);
+        Ok(())
+    }
+
+    /// `^O`: open `name` in a new buffer and make it active. A missing file opens
+    /// an empty buffer with that name, exactly like the command line.
+    fn open_path(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.inform(t(self.lang(), "no file name given"));
+            return;
+        }
+        let path = match file::absolute(name) {
+            Ok(path) => path,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot resolve {}: {}",
+                    &[name, &err.to_string()],
+                ));
+                return;
             }
-            Err(err) => self.inform(format!("save failed: {err}")),
+        };
+        let document = match std::fs::read(&path) {
+            Ok(bytes) => match Document::from_bytes(name, Some(path.clone()), &bytes) {
+                Ok(document) => document,
+                Err(err) => {
+                    self.inform(tf(
+                        self.lang(),
+                        "cannot open {}: {}",
+                        &[&path.display().to_string(), &err.to_string()],
+                    ));
+                    return;
+                }
+            },
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Document {
+                path: Some(path),
+                ..Document::empty(name)
+            },
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot open {}: {}",
+                    &[&path.display().to_string(), &err.to_string()],
+                ));
+                return;
+            }
+        };
+        self.docs.push(document);
+        self.active = self.docs.len() - 1;
+        self.sync_editors();
+        self.resolve_grammar();
+        self.restore_recovery_for(self.active);
+    }
+
+    /// `^R`: replace this buffer with the file as it is on disk. The whole text
+    /// is replaced, so the undo history is dropped (its ranges name text that no
+    /// longer exists) and a dirty buffer asks once. A missing file, or one that
+    /// cannot be decoded, changes nothing.
+    fn reload(&mut self, confirming: bool) {
+        let Some(path) = self.document().path.clone() else {
+            self.inform(t(self.lang(), "this buffer has no file name"));
+            return;
+        };
+        if self.document().editor.is_dirty() && !confirming {
+            self.confirm_reload = true;
+            self.inform(t(
+                self.lang(),
+                "unsaved changes: ^R again to reload, ^S to save",
+            ));
+            return;
+        }
+        let name = path.display().to_string();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot open {}: {}",
+                    &[&name, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        let loaded = match encoding::decode(&bytes) {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot open {}: {}",
+                    &[&name, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        // The bytes may have been rewritten by another program in another
+        // encoding; the buffer follows the file, exactly like an open does.
+        let document = self.document_mut();
+        document.encoding = loaded.encoding;
+        document.editor.load(&loaded.text);
+        self.forget_recovery(&path);
+        self.inform(tf(self.lang(), "reloaded {}", &[&name]));
+    }
+
+    /// `M-I`: read a file and insert its text at the cursor as one undo step. The
+    /// buffer keeps its own name and encoding: this is an edit, not an open.
+    fn insert_file(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.inform(t(self.lang(), "no file name given"));
+            return;
+        }
+        let path = match file::absolute(name) {
+            Ok(path) => path,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot resolve {}: {}",
+                    &[name, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        let shown = path.display().to_string();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot open {}: {}",
+                    &[&shown, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        let loaded = match encoding::decode(&bytes) {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                self.inform(tf(
+                    self.lang(),
+                    "cannot open {}: {}",
+                    &[&shown, &err.to_string()],
+                ));
+                return;
+            }
+        };
+        self.editor_mut().apply(Action::PasteText(loaded.text));
+        self.inform(tf(self.lang(), "inserted {}", &[&shown]));
+    }
+
+    /// `^G` / `M-G`: `line[,column]`, one-based, or `+N`/`-N` relative to the
+    /// current line. Anything else is reported and changes nothing.
+    fn goto(&mut self, text: &str) {
+        let raw = text.trim();
+        if raw.is_empty() {
+            self.inform(t(self.lang(), "no line given"));
+            return;
+        }
+        let (line_text, column_text) = match raw.split_once([',', ':']) {
+            Some((line, column)) => (line.trim(), Some(column.trim())),
+            None => (raw, None),
+        };
+        let (line, column) = (self.editor().cursor().line(), self.editor().cursor().col());
+        let Some(target) = parse_target(line_text, line + 1) else {
+            self.inform(tf(self.lang(), "not a line: {}", &[line_text]));
+            return;
+        };
+        let target = target
+            .saturating_sub(1)
+            .min(self.editor().buffer().line_count() - 1);
+        let column = match column_text {
+            None => 0,
+            Some(text) => match parse_target(text, column + 1) {
+                Some(column) => column.saturating_sub(1),
+                None => {
+                    self.inform(tf(self.lang(), "not a column: {}", &[text]));
+                    return;
+                }
+            },
+        };
+        let column = column.min(self.editor().buffer().line_len(target));
+        self.editor_mut().set_cursor(target, column);
+    }
+
+    /// `M-X`: run `sh -c <command>` and insert its stdout at the cursor as one
+    /// undo step. The status bar reports the exit code and the first stderr line,
+    /// so a failing command is visible without a second pane.
+    fn execute(&mut self, text: &str) {
+        let command = text.trim();
+        if command.is_empty() {
+            self.inform(t(self.lang(), "no command given"));
+            return;
+        }
+        let output = match std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                self.inform(tf(self.lang(), "cannot run: {}", &[&err.to_string()]));
+                return;
+            }
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let inserted = !stdout.is_empty();
+        if inserted {
+            self.editor_mut().apply(Action::PasteText(stdout));
+        }
+        let status = output
+            .status
+            .code()
+            .map_or_else(|| "signal".to_string(), |code| code.to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr.lines().next().unwrap_or_default().to_string();
+        let lang = self.lang();
+        let report = match (inserted, first.is_empty()) {
+            (true, true) => tf(lang, "exit {}: inserted output", &[&status]),
+            (true, false) => tf(lang, "exit {}: inserted output; {}", &[&status, &first]),
+            (false, true) => tf(lang, "exit {}: no output", &[&status]),
+            (false, false) => tf(lang, "exit {}: {}", &[&status, &first]),
+        };
+        self.inform(report);
+    }
+
+    /// Accept a one-line prompt. Returns whether the overlay stays open; every
+    /// outcome is reported on the status row, so a failure closes it.
+    fn accept_line(&mut self, line: &Line) -> bool {
+        match line.kind {
+            Kind::SaveAs => self.save_as(line.text()),
+            Kind::Open => self.open_path(line.text()),
+            Kind::InsertFile => self.insert_file(line.text()),
+            Kind::Goto => self.goto(line.text()),
+            Kind::Execute => self.execute(line.text()),
+        }
+        false
+    }
+
+    /// Tab in Save as / Open: one candidate fills the line, several extend it to
+    /// the longest common prefix. No candidate leaves it alone — a prompt never
+    /// complains mid-typing.
+    fn complete_path(&mut self, line: &mut Line) {
+        let candidates = file::complete(line.text());
+        match candidates.len() {
+            0 => {}
+            1 => line.set_text(&candidates[0]),
+            _ => line.set_text(&file::common_prefix(&candidates)),
+        }
+    }
+
+    /// The OSC 52 sequence for the current register, when the `osc52` option is on
+    /// and there is something to send. Split out from the write so the decision is
+    /// testable without a terminal.
+    fn clipboard_sequence(&self) -> Option<(String, bool)> {
+        if !self.config.bool(Opt::Osc52) {
+            return None;
+        }
+        let text = self.editor().register();
+        if text.is_empty() {
+            return None;
+        }
+        Some(clipboard::sequence(text))
+    }
+
+    /// Send the freshly copied register to the terminal's clipboard when the
+    /// `osc52` option is on. Truncation is reported, never silent.
+    fn copy_out(&mut self) {
+        let Some((sequence, truncated)) = self.clipboard_sequence() else {
+            return;
+        };
+        if let Err(err) = clipboard::emit(&sequence) {
+            self.inform(tf(self.lang(), "clipboard: {}", &[&err.to_string()]));
+        } else if truncated {
+            let limit = (clipboard::OSC52_LIMIT / 1024).to_string();
+            self.inform(tf(self.lang(), "clipboard truncated to {} KiB", &[&limit]));
+        }
+    }
+
+    /// Schedule (or cancel) the next snapshot after an action. Only a dirty buffer
+    /// needs one, and every edit re-arms the 2 s debounce.
+    fn schedule_recovery(&mut self, now: Instant) {
+        if self.recovery_dir.is_none() {
+            return;
+        }
+        self.recovery_due = if self.any_dirty() {
+            Some(now + recovery::DEBOUNCE)
+        } else {
+            None
+        };
+    }
+
+    /// Write the snapshot when it is due. Called from the idle path of the event
+    /// loop, never from `draw`.
+    fn flush_recovery(&mut self, now: Instant) {
+        let Some(due) = self.recovery_due else {
+            return;
+        };
+        if now < due {
+            return;
+        }
+        self.recovery_due = None;
+        self.write_recovery();
+    }
+
+    /// Snapshot every dirty buffer that has a path. One failure is reported once
+    /// and never aborts the session.
+    fn write_recovery(&mut self) {
+        let Some(dir) = self.recovery_dir.clone() else {
+            return;
+        };
+        let mut failure = None;
+        for document in &self.docs {
+            if !document.editor.is_dirty() {
+                continue;
+            }
+            let Some(path) = &document.path else {
+                continue;
+            };
+            let snapshot = recovery::Snapshot {
+                path: path.clone(),
+                encoding: document.encoding,
+                text: document.editor.buffer().chunks().collect(),
+            };
+            if let Err(err) = recovery::write(&dir, &snapshot) {
+                failure = Some(err);
+            }
+        }
+        if let Some(err) = failure {
+            self.inform(tf(self.lang(), "recovery: {}", &[&err.to_string()]));
+        }
+    }
+
+    /// Adopt a snapshot for every open buffer at startup.
+    fn restore_recovery(&mut self) {
+        for index in 0..self.docs.len() {
+            self.restore_recovery_for(index);
+        }
+    }
+
+    /// Adopt the snapshot of one buffer when the file on disk does not already
+    /// contain it. The buffer becomes dirty by definition: it is unsaved work.
+    fn restore_recovery_for(&mut self, index: usize) {
+        let Some(dir) = self.recovery_dir.clone() else {
+            return;
+        };
+        let Some(path) = self.docs[index].path.clone() else {
+            return;
+        };
+        let Some(snapshot) = recovery::load(&dir, &path) else {
+            return;
+        };
+        if snapshot.text
+            == self.docs[index]
+                .editor
+                .buffer()
+                .chunks()
+                .collect::<String>()
+        {
+            // The file already holds it: the snapshot is stale, not useful.
+            recovery::remove(&dir, &path);
+            return;
+        }
+        let tab_width = self.tab_width();
+        let document = &mut self.docs[index];
+        document.editor = Editor::from_text(&snapshot.text);
+        document.editor.set_tab_width(tab_width);
+        document.editor.set_dirty(true);
+        document.encoding = snapshot.encoding;
+        document.viewport = Viewport::default();
+        let path = path.display().to_string();
+        self.inform(tf(
+            self.lang(),
+            "recovered unsaved changes for {}; ^S saves them",
+            &[&path],
+        ));
+    }
+
+    /// Drop the snapshot for `path`: it is obsolete after a save or a close.
+    fn forget_recovery(&self, path: &Path) {
+        if let Some(dir) = &self.recovery_dir {
+            recovery::remove(dir, path);
+        }
+    }
+
+    /// A clean exit leaves no snapshots behind.
+    fn forget_all_recovery(&self) {
+        let Some(dir) = &self.recovery_dir else {
+            return;
+        };
+        for document in &self.docs {
+            if let Some(path) = &document.path {
+                recovery::remove(dir, path);
+            }
         }
     }
 
@@ -667,8 +1231,16 @@ impl App {
     fn close_buffer(&mut self, confirming: bool) {
         if self.document().editor.is_dirty() && !confirming {
             self.confirm_close = true;
-            self.inform("unsaved changes: ^W again to close this buffer, ^S to save");
+            self.inform(t(
+                self.lang(),
+                "unsaved changes: ^W again to close this buffer, ^S to save",
+            ));
             return;
+        }
+        if let Some(path) = self.document().path.clone() {
+            // The buffer is gone, so its snapshot has nothing left to rescue; the
+            // close was confirmed, which is the same answer as "discard".
+            self.forget_recovery(&path);
         }
         if self.docs.len() == 1 {
             self.quit = true;
@@ -698,7 +1270,7 @@ impl App {
     fn accept_find(&mut self, prompt: &Prompt) {
         self.find.query = prompt.text().to_string();
         if prompt.is_empty() {
-            self.inform("empty search pattern");
+            self.inform(t(self.lang(), "empty search pattern"));
             return;
         }
         let direction = self.find.direction();
@@ -706,7 +1278,7 @@ impl App {
             match Search::compile(prompt.text(), self.find.regexp, self.find.case_sensitive) {
                 Ok(search) => search,
                 Err(err) => {
-                    self.inform(format!("invalid pattern: {err}"));
+                    self.inform(tf(self.lang(), "invalid pattern: {}", &[&err.to_string()]));
                     return;
                 }
             };
@@ -718,14 +1290,14 @@ impl App {
     /// `M-W`/`M-B`: reuse the last pattern and step past the current match.
     fn repeat_find(&mut self, direction: Direction) {
         if self.find.query.is_empty() {
-            self.inform("no search yet: ^F");
+            self.inform(t(self.lang(), "no search yet: ^F"));
             return;
         }
         let search =
             match Search::compile(&self.find.query, self.find.regexp, self.find.case_sensitive) {
                 Ok(search) => search,
                 Err(err) => {
-                    self.inform(format!("invalid pattern: {err}"));
+                    self.inform(tf(self.lang(), "invalid pattern: {}", &[&err.to_string()]));
                     return;
                 }
             };
@@ -744,12 +1316,12 @@ impl App {
                 let (line, col) = self.editor().buffer().char_to_position(hit.start);
                 self.editor_mut().set_cursor(line, col);
                 if hit.wrapped {
-                    self.inform("search wrapped");
+                    self.inform(t(self.lang(), "search wrapped"));
                 }
             }
             None => {
                 let query = self.find.query.clone();
-                self.inform(format!("not found: {query}"));
+                self.inform(tf(self.lang(), "not found: {}", &[&query]));
             }
         }
     }
@@ -832,9 +1404,10 @@ impl App {
     }
 
     pub(crate) fn buffer_names(&self) -> Vec<String> {
+        let lang = self.lang();
         self.docs
             .iter()
-            .map(|document| document.file.clone())
+            .map(|document| display_name(&document.file, lang))
             .collect()
     }
 
@@ -844,8 +1417,19 @@ impl App {
         self.document().encoding
     }
 
+    /// Display name of the active buffer; the translated sentinel when unnamed.
     pub(crate) fn file_name(&self) -> &str {
-        &self.document().file
+        let name = &self.document().file;
+        if name.is_empty() {
+            t(self.lang(), "[No Name]")
+        } else {
+            name
+        }
+    }
+
+    /// Interface language of the session, from the `language` option.
+    pub(crate) fn lang(&self) -> Lang {
+        self.config.language()
     }
 
     /// `tab_size` from the registry; the renderer and every editor share it.
@@ -874,18 +1458,23 @@ impl App {
         if let Some(message) = &self.message {
             return format!(" {message}");
         }
+        let lang = self.lang();
         let mut text = format!(" nnano {}", env!("CARGO_PKG_VERSION"));
-        text.push_str("  ^H: help");
+        text.push_str("  ");
+        text.push_str(t(lang, "^H: help"));
         if self.any_dirty() {
-            text.push_str("  [Modified]");
+            text.push_str("  ");
+            text.push_str(t(lang, "[Modified]"));
         }
         if self.docs.len() > 1 {
             text.push_str(&format!("  {}/{}", self.active + 1, self.docs.len()));
         }
         if self.caps.tmux {
-            text.push_str("   ^B: tmux prefix");
+            text.push_str("   ");
+            text.push_str(t(lang, "^B: tmux prefix"));
         } else if self.caps.screen {
-            text.push_str("   ^A: screen prefix");
+            text.push_str("   ");
+            text.push_str(t(lang, "^A: screen prefix"));
         }
         text
     }
@@ -1035,6 +1624,12 @@ impl App {
         body
     }
 
+    /// Cells in the text area: the wrap width `^J` uses. Zero before the first
+    /// frame has been measured.
+    fn body_width(&self) -> usize {
+        usize::from(self.body_rect().width)
+    }
+
     fn tabs_rect(&self) -> Option<ratatui::layout::Rect> {
         let (tabs, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
         tabs
@@ -1047,25 +1642,28 @@ impl Default for App {
     }
 }
 
-/// Write the buffer over the file the user opened.
-///
-/// In place on purpose: truncate the real path, write, flush. No temp file, no
-/// `rename`, **no `file~`**. Hardlinks and symlinks survive, and a crash or a full
-/// disk mid-write leaves a truncated file — the recovery file is the only net.
-fn save_in_place(path: &Path, buffer: &TextBuffer, encoding: Encoding) -> io::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    match encoding::write_encoded(&mut file, buffer.chunks(), encoding) {
-        Ok(()) => {}
-        Err(EncodeError::Io(err)) => return Err(err),
-        Err(err @ EncodeError::NotRepresentable(_)) => {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, err));
-        }
+/// One target of `^G`: `12`, `+3` or `-2`, in the same one-based units as the
+/// input. `current` is the one-based position the relative form counts from.
+fn parse_target(text: &str, current: usize) -> Option<usize> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
     }
-    file.flush()
+    if let Some(rest) = text.strip_prefix('+') {
+        return rest
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .map(|delta| current.saturating_add(delta));
+    }
+    if let Some(rest) = text.strip_prefix('-') {
+        return rest
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .map(|delta| current.saturating_sub(delta));
+    }
+    text.parse().ok()
 }
 
 /// One page is the visible area minus the row the cursor already sits on.
@@ -1079,6 +1677,10 @@ pub fn run(file: Option<String>, config: Config, syntax: SyntaxSet) -> io::Resul
     let mut app = App::open(file)?;
     app.apply_config(config);
     app.apply_syntax(syntax);
+    // The recovery directory is a runtime concern: a test or a build without a
+    // state directory must never touch the disk.
+    app.recovery_dir = config::detect_state_dir().map(|dir| dir.join("recovery"));
+    app.restore_recovery();
     app.run()
 }
 #[cfg(test)]
@@ -1203,12 +1805,22 @@ mod tests {
         let mut app = App::from_text("s.txt", "");
         app.screen = (80, 24);
         app.apply(Action::OpenSettings);
-        // Panel: 3 options + 3 groups + 4 = 10 rows, centered in a 23-row body.
-        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 10, 12));
+        // Find the screen row the renderer puts the Mouse row on, using the same
+        // hit test the click goes through: the panel geometry is not hard-coded
+        // here, so adding an option cannot silently desync this test.
+        let target = nnano_core::config::OPTIONS
+            .iter()
+            .position(|row| row.id == Opt::Mouse)
+            .unwrap();
+        let body = app.body_rect();
+        let y = (body.y..body.y + body.height)
+            .find(|y| super::ui::overlays::settings::row_at(body, *y) == Some(target))
+            .expect("the Mouse row is on screen");
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 10, y));
         let Some(super::Overlay::Settings(settings)) = app.overlay() else {
             panic!("settings should still be open");
         };
-        assert_eq!(settings.selected(), 2);
+        assert_eq!(settings.selected(), target);
     }
 
     #[test]
@@ -1275,8 +1887,13 @@ mod tests {
             10,
             first_row,
         ));
-        // The first command is Save file, and this buffer has no path.
-        assert!(app.message().unwrap().contains("no filename"));
+        // The first command is Save file, and this buffer has no path: it opens
+        // the save-as prompt instead of refusing.
+        let Some(super::Overlay::Line(line)) = app.overlay() else {
+            panic!("save on an unnamed buffer should ask for a path");
+        };
+        assert_eq!(line.kind, super::ui::overlays::line::Kind::SaveAs);
+        assert!(app.message().is_none(), "a prompt needs no extra message");
     }
 
     #[test]
@@ -1431,8 +2048,13 @@ mod tests {
         let mut app = App::from_text("", "");
         app.apply(Action::Insert('x'));
         app.apply(Action::Save);
-        assert!(app.message().unwrap().contains("no filename"));
+        // No path: rather than refusing, `^S` asks for one. The buffer stays
+        // dirty until the write actually lands.
         assert!(app.editor().is_dirty());
+        let Some(super::Overlay::Line(line)) = app.overlay() else {
+            panic!("save-as should be open");
+        };
+        assert_eq!(line.kind, super::ui::overlays::line::Kind::SaveAs);
     }
 
     #[test]
@@ -1706,9 +2328,11 @@ mod tests {
     fn the_palette_navigates_with_the_arrows() {
         let mut app = App::from_text("s.txt", "");
         app.apply(Action::OpenPalette);
-        app.apply(Action::MoveDown);
+        // Save file, Save as, Open file, Reload from disk, Insert file, then Find.
+        for _ in 0..5 {
+            app.apply(Action::MoveDown);
+        }
         app.apply(Action::Newline);
-        // The second row is "Find": it opens the prompt.
         assert!(matches!(app.overlay(), Some(super::Overlay::Find(_))));
     }
 
@@ -1838,5 +2462,458 @@ mod tests {
         let (left, _) = layout[0];
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), left + 1, 0));
         assert_eq!(app.active_buffer(), 0);
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nnano-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn save_as_writes_the_file_and_adopts_its_name() {
+        let path = temp("save-as.txt");
+        let _ = std::fs::remove_file(&path);
+        let mut app = App::from_text("", "hola\n");
+        app.apply(Action::Save);
+        let Some(super::Overlay::Line(line)) = app.overlay() else {
+            panic!("save with no path asks for one");
+        };
+        assert_eq!(line.kind, super::ui::overlays::line::Kind::SaveAs);
+
+        for ch in path.display().to_string().chars() {
+            app.apply(Action::Insert(ch));
+        }
+        app.apply(Action::Newline);
+        assert!(app.overlay().is_none(), "accept closes the prompt");
+        assert_eq!(std::fs::read(&path).unwrap(), b"hola\n");
+        assert!(!app.editor().is_dirty());
+        assert_eq!(app.file_name(), path.file_name().unwrap().to_string_lossy());
+        assert!(app.message().unwrap().starts_with("saved"));
+
+        // A second `^S` now writes in place, no prompt.
+        app.apply(Action::Insert('!'));
+        assert!(app.editor().is_dirty());
+        app.apply(Action::Save);
+        assert!(app.overlay().is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"!hola\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_as_refuses_a_directory_and_keeps_the_old_name() {
+        let dir = scratch_dir("save-as-dir");
+        let mut app = App::from_text("nota.txt", "hola\n");
+        app.save_as(dir.to_str().unwrap());
+        assert!(app.message().unwrap().contains("is a directory"));
+        assert_eq!(app.file_name(), "nota.txt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_as_rejects_an_empty_name() {
+        let mut app = App::from_text("nota.txt", "");
+        app.save_as("   ");
+        assert!(app.message().unwrap().contains("no file name"));
+        assert_eq!(app.file_name(), "nota.txt");
+    }
+
+    #[test]
+    fn save_as_switches_the_grammar_with_the_name() {
+        let dir = scratch_dir("grammar");
+        let path = dir.join("programa.rs");
+        let mut app = App::from_text("notes.txt", "fn x\n");
+        app.apply_syntax(syntax_set());
+        assert!(app.syntax_spans(0).is_empty(), "no rust grammar for .txt");
+
+        app.save_as(&path.display().to_string());
+        assert!(!app.syntax_spans(0).is_empty(), "the new name is a .rs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_path_adds_a_buffer_and_activates_it() {
+        let path = temp("opened.txt");
+        std::fs::write(&path, "uno\ndos\n").unwrap();
+        let mut app = App::from_text("s.txt", "");
+        app.open_path(&path.display().to_string());
+        assert_eq!(app.buffer_count(), 2);
+        assert_eq!(app.active_buffer(), 1);
+        assert_eq!(app.editor().buffer().line_text(1), "dos");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_path_of_a_missing_file_opens_an_empty_buffer_with_that_name() {
+        let path = temp("no-such-file.txt");
+        let _ = std::fs::remove_file(&path);
+        let mut app = App::from_text("s.txt", "");
+        app.open_path(&path.display().to_string());
+        assert_eq!(app.buffer_count(), 2);
+        assert!(app.editor().buffer().is_empty());
+        assert!(app.file_name().contains("no-such-file"));
+    }
+
+    #[test]
+    fn open_path_reports_a_directory_instead_of_panicking() {
+        let dir = scratch_dir("open-dir");
+        let mut app = App::from_text("s.txt", "");
+        app.open_path(dir.to_str().unwrap());
+        assert!(app.message().unwrap().contains("cannot open"));
+        assert_eq!(app.buffer_count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_open_prompt_completes_a_path_with_tab() {
+        let dir = scratch_dir("complete-prompt");
+        std::fs::write(dir.join("informe.txt"), "").unwrap();
+        let mut app = App::from_text("s.txt", "");
+        app.apply(Action::OpenPath);
+        for ch in format!("{}/inf", dir.display()).chars() {
+            app.apply(Action::Insert(ch));
+        }
+        app.apply(Action::InsertTab);
+        let Some(super::Overlay::Line(line)) = app.overlay() else {
+            panic!("the open prompt should stay open");
+        };
+        assert!(line.text().ends_with("informe.txt"), "{}", line.text());
+
+        // Accepting opens it.
+        app.apply(Action::Newline);
+        assert_eq!(app.buffer_count(), 2);
+        assert!(app.file_name().contains("informe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_replaces_the_buffer_and_drops_the_undo_history() {
+        let path = temp("reload.txt");
+        std::fs::write(&path, "uno\n").unwrap();
+        let mut app = open_file(&path);
+        // Another program rewrites the file behind our back.
+        std::fs::write(&path, "dos\ntres\n").unwrap();
+        app.apply(Action::Reload);
+        assert_eq!(app.editor().buffer().line_text(0), "dos");
+        assert_eq!(app.editor().buffer().line_text(1), "tres");
+        assert!(!app.editor().is_dirty());
+        assert!(app.message().unwrap().starts_with("reloaded"));
+
+        // The old text is gone, so the old history cannot be undone into it.
+        app.apply(Action::Undo);
+        assert_eq!(app.editor().buffer().line_text(0), "dos");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_on_a_dirty_buffer_asks_once() {
+        let path = temp("reload-dirty.txt");
+        std::fs::write(&path, "en disco\n").unwrap();
+        let mut app = open_file(&path);
+        app.apply(Action::Insert('x'));
+        assert!(app.editor().is_dirty());
+
+        app.apply(Action::Reload);
+        assert!(app.editor().is_dirty(), "the edit is kept");
+        assert!(app.message().unwrap().contains("^R again"));
+        assert_eq!(app.editor().buffer().line_text(0), "xen disco");
+
+        app.apply(Action::Reload);
+        assert!(!app.editor().is_dirty());
+        assert_eq!(app.editor().buffer().line_text(0), "en disco");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_without_a_path_reports_it_and_changes_nothing() {
+        let mut app = App::from_text("", "hola\n");
+        app.apply(Action::Reload);
+        assert!(app.message().unwrap().contains("no file name"));
+        assert_eq!(app.editor().buffer().line_text(0), "hola");
+    }
+
+    #[test]
+    fn reload_of_a_missing_file_keeps_the_buffer() {
+        let path = temp("reload-gone.txt");
+        std::fs::write(&path, "hola\n").unwrap();
+        let mut app = open_file(&path);
+        std::fs::remove_file(&path).unwrap();
+        app.apply(Action::Reload);
+        assert!(app.message().unwrap().contains("cannot open"));
+        assert_eq!(app.editor().buffer().line_text(0), "hola");
+    }
+
+    #[test]
+    fn insert_file_inserts_at_the_cursor_as_one_undo_step() {
+        let dir = scratch_dir("insert-file");
+        let source = dir.join("trozo.txt");
+        std::fs::write(&source, "INSERTADO\n").unwrap();
+        let mut app = App::from_text("nota.txt", "uno\ndos\n");
+        app.editor_mut().set_cursor(1, 0);
+
+        app.apply(Action::InsertFile);
+        let Some(super::Overlay::Line(line)) = app.overlay() else {
+            panic!("insert-file asks for a path");
+        };
+        assert_eq!(line.kind, super::ui::overlays::line::Kind::InsertFile);
+        for ch in source.display().to_string().chars() {
+            app.apply(Action::Insert(ch));
+        }
+        app.apply(Action::Newline);
+
+        assert!(app.overlay().is_none());
+        assert_eq!(app.editor().buffer().line_text(1), "INSERTADO");
+        assert_eq!(app.editor().buffer().line_text(2), "dos");
+        assert!(app.editor().is_dirty());
+        assert!(app.message().unwrap().starts_with("inserted"));
+
+        app.apply(Action::Undo);
+        assert_eq!(app.editor().buffer().line_text(1), "dos");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn insert_file_of_a_missing_file_changes_nothing() {
+        let path = temp("insert-gone.txt");
+        let _ = std::fs::remove_file(&path);
+        let mut app = App::from_text("nota.txt", "uno\n");
+        app.insert_file(&path.display().to_string());
+        assert!(app.message().unwrap().contains("cannot open"));
+        assert_eq!(app.editor().buffer().line_text(0), "uno");
+        assert!(!app.editor().is_dirty());
+    }
+
+    #[test]
+    fn goto_accepts_a_line_a_column_and_a_relative_offset() {
+        let text = (0..20).map(|n| format!("linea {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        app.goto("5");
+        assert_eq!(app.editor().cursor().line(), 4);
+        app.goto("7,3");
+        assert_eq!(
+            (app.editor().cursor().line(), app.editor().cursor().col()),
+            (6, 2)
+        );
+        app.goto("+2");
+        assert_eq!(app.editor().cursor().line(), 8);
+        app.goto("-1");
+        assert_eq!(app.editor().cursor().line(), 7);
+    }
+
+    #[test]
+    fn goto_clamps_and_rejects_garbage() {
+        let mut app = App::from_text("x.txt", "uno\ndos\n");
+        app.goto("9999");
+        assert_eq!(app.editor().cursor().line(), 2, "clamped to the last line");
+        app.goto("1,999");
+        assert_eq!(
+            app.editor().cursor().col(),
+            app.editor().buffer().line_len(0)
+        );
+        app.goto("dos");
+        assert!(app.message().unwrap().contains("not a line"));
+        app.goto("1,dos");
+        assert!(app.message().unwrap().contains("not a column"));
+        app.goto("");
+        assert!(app.message().unwrap().contains("no line"));
+    }
+
+    #[test]
+    fn justify_wraps_to_the_body_width() {
+        let mut app = App::from_text("s.txt", "uno dos tres cuatro cinco\n");
+        app.screen = (14, 10);
+        app.apply(Action::Justify);
+        assert_eq!(app.editor().buffer().line_text(0), "uno dos tres");
+        assert_eq!(app.editor().buffer().line_text(1), "cuatro cinco");
+    }
+
+    #[test]
+    fn execute_inserts_the_command_output_as_one_undo_step() {
+        let mut app = App::from_text("s.txt", "");
+        app.execute("printf 'hola\\nchau'");
+        assert_eq!(app.editor().buffer().line_text(0), "hola");
+        assert!(app.editor().is_dirty());
+        app.apply(Action::Undo);
+        assert!(app.editor().buffer().is_empty());
+    }
+
+    #[test]
+    fn execute_reports_a_failing_command_without_touching_the_buffer() {
+        let mut app = App::from_text("s.txt", "x\n");
+        app.execute("echo boom >&2; exit 3");
+        assert_eq!(app.editor().buffer().line_text(0), "x");
+        let message = app.message().unwrap();
+        assert!(message.contains("exit 3"), "{message}");
+        assert!(message.contains("boom"), "{message}");
+    }
+
+    #[test]
+    fn execute_with_no_output_says_so() {
+        let mut app = App::from_text("s.txt", "");
+        app.execute("true");
+        assert!(app.message().unwrap().contains("no output"));
+        app.execute("   ");
+        assert!(app.message().unwrap().contains("no command"));
+    }
+
+    #[test]
+    fn an_overlay_edit_still_arms_the_snapshot_clock() {
+        // Replace-all happens inside an overlay; it edits the buffer, so the
+        // recovery clock must be re-armed on that path too.
+        let dir = scratch_dir("recovery-overlay");
+        let mut app = App::from_text("s.txt", "uno dos uno\n");
+        app.recovery_dir = Some(dir.clone());
+        open_replace(&mut app, "uno", "X");
+        app.apply(Action::Insert('a'));
+        assert!(app.overlay().is_none(), "replace-all closes");
+        assert!(app.editor().is_dirty());
+        assert!(
+            app.recovery_due.is_some(),
+            "an overlay edit must schedule a snapshot"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dirty_buffer_is_snapshotted_after_the_debounce() {
+        let dir = scratch_dir("recovery-due");
+        let path = temp("recovered.txt");
+        std::fs::write(&path, "viejo\n").unwrap();
+        let mut app = open_file(&path);
+        app.recovery_dir = Some(dir.clone());
+        app.apply(Action::Insert('x'));
+        assert!(app.recovery_due.is_some(), "an edit arms the debounce");
+
+        // Not yet due: nothing on disk.
+        app.flush_recovery(std::time::Instant::now());
+        assert!(nnano_core::recovery::load(&dir, &path).is_none());
+
+        // After the debounce the snapshot holds the unsaved text.
+        app.flush_recovery(std::time::Instant::now() + super::recovery::DEBOUNCE);
+        let snapshot = nnano_core::recovery::load(&dir, &path).unwrap();
+        assert!(snapshot.text.starts_with('x'), "{:?}", snapshot.text);
+        assert_eq!(snapshot.path, path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clean_buffer_writes_no_snapshot_and_saving_removes_it() {
+        let dir = scratch_dir("recovery-clean");
+        let path = temp("clean.txt");
+        std::fs::write(&path, "uno\n").unwrap();
+        let mut app = open_file(&path);
+        app.recovery_dir = Some(dir.clone());
+
+        app.flush_recovery(std::time::Instant::now() + super::recovery::DEBOUNCE);
+        assert!(
+            nnano_core::recovery::load(&dir, &path).is_none(),
+            "a clean buffer has nothing to rescue"
+        );
+
+        app.apply(Action::Insert('!'));
+        app.flush_recovery(std::time::Instant::now() + super::recovery::DEBOUNCE);
+        assert!(nnano_core::recovery::load(&dir, &path).is_some());
+
+        app.apply(Action::Save);
+        assert!(
+            nnano_core::recovery::load(&dir, &path).is_none(),
+            "a successful save drops the snapshot"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"!uno\n");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clean_exit_removes_every_snapshot() {
+        let dir = scratch_dir("recovery-exit");
+        let path = temp("exit.txt");
+        std::fs::write(&path, "uno\n").unwrap();
+        let mut app = open_file(&path);
+        app.recovery_dir = Some(dir.clone());
+        app.apply(Action::Insert('x'));
+        app.flush_recovery(std::time::Instant::now() + super::recovery::DEBOUNCE);
+        assert!(nnano_core::recovery::load(&dir, &path).is_some());
+
+        app.forget_all_recovery();
+        assert!(nnano_core::recovery::load(&dir, &path).is_none());
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_snapshot_is_restored_dirty_at_startup() {
+        let dir = scratch_dir("recovery-restore");
+        let path = temp("restore.txt");
+        std::fs::write(&path, "viejo\n").unwrap();
+        let mut app = open_file(&path);
+        app.recovery_dir = Some(dir.clone());
+        nnano_core::recovery::write(
+            &dir,
+            &nnano_core::recovery::Snapshot {
+                path: app.document().path.clone().unwrap(),
+                encoding: Encoding::Utf8,
+                text: "nuevo\nsin guardar\n".to_string(),
+            },
+        )
+        .unwrap();
+
+        app.restore_recovery();
+        assert_eq!(app.editor().buffer().line_text(0), "nuevo");
+        assert!(app.editor().is_dirty(), "recovered text is unsaved");
+        assert!(app.message().unwrap().contains("recovered"));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_snapshot_that_matches_the_file_is_dropped() {
+        let dir = scratch_dir("recovery-stale");
+        let path = temp("stale.txt");
+        std::fs::write(&path, "igual\n").unwrap();
+        let mut app = open_file(&path);
+        app.recovery_dir = Some(dir.clone());
+        let target = app.document().path.clone().unwrap();
+        nnano_core::recovery::write(
+            &dir,
+            &nnano_core::recovery::Snapshot {
+                path: target.clone(),
+                encoding: Encoding::Utf8,
+                text: "igual\n".to_string(),
+            },
+        )
+        .unwrap();
+
+        app.restore_recovery();
+        assert!(!app.editor().is_dirty(), "nothing was recovered");
+        assert!(
+            nnano_core::recovery::load(&dir, &target).is_none(),
+            "the stale snapshot is removed"
+        );
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copying_out_is_off_until_the_option_is_on() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply(Action::Copy);
+        assert!(
+            app.clipboard_sequence().is_none(),
+            "OSC 52 is opt-in, and off by default"
+        );
+
+        app.apply_config(config(&[(Opt::Osc52, Value::Bool(true))]));
+        app.apply(Action::Copy);
+        let (sequence, truncated) = app.clipboard_sequence().unwrap();
+        assert!(sequence.starts_with("\x1b]52;c;"), "{sequence:?}");
+        assert!(!truncated);
+
+        let mut empty = App::from_text("s.txt", "");
+        empty.apply_config(config(&[(Opt::Osc52, Value::Bool(true))]));
+        empty.apply(Action::Copy);
+        assert!(empty.clipboard_sequence().is_none(), "nothing to send");
     }
 }

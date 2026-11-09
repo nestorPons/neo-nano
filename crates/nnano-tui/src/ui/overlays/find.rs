@@ -14,6 +14,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use super::prompt::{Prompt, draw_prompt_row};
+use crate::i18n::{Lang, t};
 
 /// Session state of the last search: nano reopens the prompt with the previous
 /// pattern and keeps the toggles.
@@ -51,25 +52,37 @@ impl FindSettings {
     }
 
     /// Active toggles, shown right-aligned on the prompt row.
-    pub fn flags(&self) -> String {
+    pub fn flags(&self, lang: Lang) -> String {
         let mut flags = Vec::new();
         if self.case_sensitive {
-            flags.push("[Case]");
+            flags.push(t(lang, "[Case]"));
         }
         if self.regexp {
-            flags.push("[Regexp]");
+            flags.push(t(lang, "[Regexp]"));
         }
         if self.backwards {
-            flags.push("[Backwards]");
+            flags.push(t(lang, "[Backwards]"));
         }
         flags.join(" ")
     }
 }
 
 /// Draw the prompt on the status row and put the terminal cursor in it.
-pub fn draw_prompt(frame: &mut Frame, area: Rect, settings: &FindSettings, prompt: &Prompt) {
+pub fn draw_prompt(
+    frame: &mut Frame,
+    area: Rect,
+    settings: &FindSettings,
+    prompt: &Prompt,
+    lang: Lang,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    draw_prompt_row(frame, area, " Find: ", prompt, &settings.flags());
+    draw_prompt_row(
+        frame,
+        area,
+        t(lang, " Find: "),
+        prompt,
+        &settings.flags(lang),
+    );
 }

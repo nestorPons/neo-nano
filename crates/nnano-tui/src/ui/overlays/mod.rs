@@ -10,6 +10,7 @@
 
 pub mod find;
 pub mod help;
+pub mod line;
 pub mod palette;
 pub mod prompt;
 pub mod replace;
@@ -17,6 +18,7 @@ pub mod settings;
 
 pub use find::FindSettings;
 pub use help::Help;
+pub use line::Line;
 pub use palette::Palette;
 pub use prompt::Prompt;
 pub use replace::Replace;
@@ -39,21 +41,26 @@ pub enum Overlay {
     Palette(Palette),
     /// Replace prompts and the per-match question; drawn on the status row.
     Replace(Replace),
+    /// Save as, open, goto and execute: one line, drawn on the status row.
+    Line(Line),
 }
 
 impl Overlay {
     /// True for overlays that take over the status row instead of floating.
     pub fn is_prompt(&self) -> bool {
-        matches!(self, Overlay::Find(_) | Overlay::Replace(_))
+        matches!(
+            self,
+            Overlay::Find(_) | Overlay::Replace(_) | Overlay::Line(_)
+        )
     }
 
-    /// Draw the floating panels. The find prompt is drawn by the status row and
-    /// is a no-op here.
+    /// Draw the floating panels. The status-row prompts are drawn by the status
+    /// row and are a no-op here.
     pub fn draw(&self, frame: &mut Frame, area: Rect, app: &App) {
         match self {
-            Overlay::Find(_) | Overlay::Replace(_) => {}
+            Overlay::Find(_) | Overlay::Replace(_) | Overlay::Line(_) => {}
             Overlay::Settings(settings) => settings::draw(frame, area, app, settings),
-            Overlay::Help(help) => help::draw(frame, area, help),
+            Overlay::Help(help) => help::draw(frame, area, help, app.lang()),
             Overlay::Palette(palette) => {
                 palette::draw(frame, area, palette, &app.buffer_names());
             }

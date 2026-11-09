@@ -95,6 +95,20 @@ fn row_args(row: &OptRow) -> Vec<Arg> {
                 None => arg,
             }]
         }
+        config::Kind::Enum(_) => {
+            let row = *row;
+            vec![
+                Arg::new(row.key)
+                    .long(row.long)
+                    .value_name("LANG")
+                    .help(row.help)
+                    .value_parser(move |raw: &str| {
+                        row.parse(raw)
+                            .map(|value| value.as_text().unwrap_or_default().to_string())
+                            .map_err(|err| format!("`--{}` {err}", row.long))
+                    }),
+            ]
+        }
     }
 }
 
@@ -117,6 +131,14 @@ fn cli_layer(matches: &ArgMatches) -> Layer {
                     && let Some(value) = matches.get_one::<i64>(row.key)
                 {
                     layer.values.push((row.id, Value::Int(*value)));
+                }
+            }
+            config::Kind::Enum(_) => {
+                if matches.value_source(row.key) == Some(clap::parser::ValueSource::CommandLine)
+                    && let Some(value) = matches.get_one::<String>(row.key)
+                    && let Ok(value) = row.parse(value)
+                {
+                    layer.values.push((row.id, value));
                 }
             }
         }
@@ -208,6 +230,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_language_flag_takes_a_code_and_rejects_anything_else() {
+        assert_eq!(
+            layer(&["--language", "es"]).values,
+            vec![(Opt::Language, super::Value::Text("es"))]
+        );
+        // The alias a user copies from `$LANG` reaches the declared spelling.
+        assert_eq!(
+            layer(&["--language", "pt_BR"]).values,
+            vec![(Opt::Language, super::Value::Text("pt"))]
+        );
+        let error = command()
+            .try_get_matches_from(["nnano", "--language", "xx"])
+            .unwrap_err();
+        assert!(error.to_string().contains("allowed values"), "{error}");
+    }
+
     /// The CLI half of the drift test: every row is reachable and parseable from
     /// the command line, with a value its own kind allows.
     #[test]
@@ -216,6 +255,7 @@ mod tests {
             let args: Vec<String> = match row.kind {
                 Kind::Bool => vec![format!("--{}", row.long)],
                 Kind::Int { .. } => vec![format!("--{}", row.long), row.default.to_string()],
+                Kind::Enum(_) => vec![format!("--{}", row.long), row.default.to_string()],
             };
             let mut argv = vec!["nnano".to_string()];
             argv.extend(args);

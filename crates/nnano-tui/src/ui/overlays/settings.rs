@@ -14,7 +14,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::popup_frame;
+use super::prompt::prompt_width;
 use crate::App;
+use crate::i18n::{Lang, t};
 
 /// Selection index into `OPTIONS`, plus nothing else: every value lives in
 /// `Config`, so the overlay cannot drift from what the editor uses.
@@ -40,7 +42,8 @@ impl Settings {
     /// it into the editor (tab width); `None` means nothing changed.
     ///
     /// `↑`/`↓` move, `←`/`→` and `Enter` change: booleans toggle, integers step
-    /// inside their registry bounds.
+    /// inside their registry bounds, an enum cycles through its declared values
+    /// (wrapping, so the picker is one key in each direction).
     pub fn handle(
         &mut self,
         action: Action,
@@ -63,6 +66,10 @@ impl Settings {
                         Value::Int((config.int(row.id) - 1).max(min))
                     }
                     (Kind::Int { max, .. }, _) => Value::Int((config.int(row.id) + 1).min(max)),
+                    (Kind::Enum(values), Action::MoveLeft) => {
+                        Value::Text(step_enum(values, config, row.id, -1))
+                    }
+                    (Kind::Enum(values), _) => Value::Text(step_enum(values, config, row.id, 1)),
                 };
                 config.set(row.id, next).ok().map(|()| row.id)
             }
@@ -71,16 +78,43 @@ impl Settings {
     }
 }
 
+/// Next value of an enum, wrapping. An unrecognised current value behaves like
+/// the first one, so a hand-edited file cannot strand the picker.
+fn step_enum(
+    values: &'static [&'static str],
+    config: &nnano_core::config::Config,
+    id: Opt,
+    step: isize,
+) -> &'static str {
+    let current = config.get(id).as_text().unwrap_or_default();
+    let index = values
+        .iter()
+        .position(|value| value.eq_ignore_ascii_case(current))
+        .unwrap_or(0);
+    let len = values.len() as isize;
+    let next = (index as isize + step).rem_euclid(len);
+    values[usize::try_from(next).unwrap_or(0)]
+}
+
 /// Height of the panel: options, group headings, the help line, the key line and
 /// the two border rows.
 fn height() -> u16 {
-    let mut groups: Vec<&str> = Vec::new();
+    u16::try_from(OPTIONS.len() + headings() + 4).unwrap_or(u16::MAX)
+}
+
+/// Headings actually drawn: one **each time the group changes**, which is not the
+/// number of distinct groups, because the registry interleaves Editor/Search/
+/// Editor. Counting distinct names here used to clip the footer by a row.
+fn headings() -> usize {
+    let mut group = "";
+    let mut count = 0;
     for row in OPTIONS {
-        if !groups.contains(&row.group) {
-            groups.push(row.group);
+        if row.group != group {
+            group = row.group;
+            count += 1;
         }
     }
-    u16::try_from(OPTIONS.len() + groups.len() + 4).unwrap_or(u16::MAX)
+    count
 }
 
 /// Panel row of each option, with the group headings counted in. Shared by the
@@ -102,7 +136,7 @@ fn row_offsets() -> Vec<usize> {
 
 /// Option under a screen row, for a click inside the panel.
 pub fn row_at(area: Rect, y: u16) -> Option<usize> {
-    let inner = super::panel_inner(area, 52, height());
+    let inner = super::panel_inner(area, PANEL_WIDTH, height());
     let offset = usize::from(y.checked_sub(inner.y)?);
     row_offsets().iter().position(|line| *line == offset)
 }
@@ -116,8 +150,9 @@ impl Settings {
 
 /// Floating panel with the option rows and the selected row's help text.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
+    let lang = app.lang();
     let height = height();
-    let inner = popup_frame(frame, area, 52, height, "Settings");
+    let inner = popup_frame(frame, area, PANEL_WIDTH, height, t(lang, "Settings"));
 
     let [list, footer] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas::<2>(inner);
@@ -128,12 +163,15 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
         if row.group != group {
             group = row.group;
             lines.push(Line::from(Span::styled(
-                format!(" {group}"),
+                format!(" {}", t(lang, group)),
                 Style::default().add_modifier(Modifier::DIM | Modifier::BOLD),
             )));
         }
-        let value = app.config().get(row.id).label();
-        let text = format!(" {:<28}{value:>8}", row.label);
+        let text = format!(
+            " {}{}",
+            pad(t(lang, row.label), LABEL_WIDTH),
+            value_text(app, row)
+        );
         let style = if index == settings.selected() {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
@@ -143,8 +181,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
     }
     frame.render_widget(Paragraph::new(lines), list);
 
-    let help = format!(" {}", settings.selected_row().help);
-    let keys = " \u{2191}\u{2193} select   \u{2190}\u{2192} change   Enter toggle   Esc close";
+    let help = format!(" {}", t(lang, settings.selected_row().help));
+    let keys = t(lang, " ↑↓ select   ←→ change   Enter toggle   Esc close");
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
@@ -158,6 +196,44 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, settings: &Settings) {
         ]),
         footer,
     );
+}
+
+/// Panel width and label column, in cells: wide enough for the longest
+/// translated label and the longest language name (`Bahasa Indonesia (auto)`).
+const PANEL_WIDTH: u16 = 62;
+const LABEL_WIDTH: usize = 34;
+
+/// Cell-exact padding: a translated label wider than the column is clipped in
+/// cells, not in chars, so CJK and Arabic rows stay inside the panel.
+fn pad(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let cells = prompt_width(&ch.to_string());
+        if used + cells > width {
+            break;
+        }
+        used += cells;
+        out.push(ch);
+    }
+    out.push_str(&" ".repeat(width.saturating_sub(used)));
+    out
+}
+
+/// The right column: `on`/`off` translated, the number as typed, and for the
+/// language row the language written in itself. `auto` also names what it
+/// currently resolves to, because "auto" alone does not tell the user much.
+fn value_text(app: &App, row: &OptRow) -> String {
+    let lang = app.lang();
+    match app.config().get(row.id) {
+        Value::Bool(true) => t(lang, "on").to_string(),
+        Value::Bool(false) => t(lang, "off").to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Text(code) if code.eq_ignore_ascii_case("auto") => {
+            format!("{} ({})", Lang::detect().native_name(), t(lang, "auto"))
+        }
+        Value::Text(code) => Lang::resolve(code).native_name().to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -228,5 +304,50 @@ mod tests {
         assert_eq!(settings.handle(Action::Cancel, &mut config), None);
         assert_eq!(settings.selected_row().id, Opt::TabSize);
         assert_eq!(config.get(Opt::TabSize), Value::Int(8));
+    }
+
+    #[test]
+    fn an_enum_cycles_through_its_values_and_wraps() {
+        use nnano_core::config::OPTIONS;
+
+        let mut settings = Settings::new();
+        let mut config = config();
+        for _ in 0..OPTIONS.len() {
+            settings.handle(Action::MoveDown, &mut config);
+        }
+        assert_eq!(settings.selected_row().id, Opt::Language);
+        assert_eq!(config.get(Opt::Language), Value::Text("en"));
+
+        assert_eq!(
+            settings.handle(Action::MoveRight, &mut config),
+            Some(Opt::Language)
+        );
+        assert_eq!(config.get(Opt::Language), Value::Text("zh-Hans"));
+
+        // Left goes back to the beginning of the picker.
+        settings.handle(Action::MoveLeft, &mut config);
+        settings.handle(Action::MoveLeft, &mut config);
+        assert_eq!(config.get(Opt::Language), Value::Text("auto"));
+
+        // Enter steps forward like `→`, and wraps at the end.
+        settings.handle(Action::Newline, &mut config);
+        assert_eq!(config.get(Opt::Language), Value::Text("en"));
+        settings.handle(Action::MoveLeft, &mut config);
+        assert_eq!(config.get(Opt::Language), Value::Text("auto"));
+    }
+
+    #[test]
+    fn a_language_change_is_live_and_translated_immediately() {
+        use nnano_core::config::OPTIONS;
+
+        let mut app = crate::App::from_text("s.txt", "");
+        app.apply(Action::OpenSettings);
+        for _ in 0..OPTIONS.len() {
+            app.apply(Action::MoveDown);
+        }
+        // `en` -> `zh-Hans`.
+        app.apply(Action::MoveRight);
+        assert_eq!(app.lang(), crate::i18n::Lang::ZhHans);
+        assert_eq!(app.config().language(), crate::i18n::Lang::ZhHans);
     }
 }

@@ -58,12 +58,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let overlay = app.overlay();
     draw_body(frame, body, app, overlay.is_none());
 
+    let lang = app.lang();
     match overlay {
         Some(Overlay::Find(prompt)) => {
-            overlays::find::draw_prompt(frame, status, app.find_settings(), prompt);
+            overlays::find::draw_prompt(frame, status, app.find_settings(), prompt, lang);
         }
         Some(Overlay::Replace(replace)) => {
-            overlays::replace::draw_status(frame, status, replace);
+            overlays::replace::draw_status(frame, status, replace, lang);
+        }
+        Some(Overlay::Line(line)) => {
+            overlays::line::draw_status(frame, status, line, lang);
         }
         Some(overlay) => {
             draw_status(frame, status, app);
@@ -486,6 +490,68 @@ mod tests {
         assert!(screen.contains("Tab size"), "{screen}");
         assert!(screen.contains("Case-sensitive search"), "{screen}");
         assert!(screen.contains('8'), "{screen}");
+        assert!(screen.contains("Language"), "{screen}");
+        // The panel is tall enough for every row it draws: the group headings are
+        // counted by change, not by distinct name, so the footer is not clipped.
+        assert!(screen.contains("select"), "{screen}");
+        assert!(screen.contains("Esc close"), "{screen}");
+    }
+
+    /// An app configured in Spanish, built without touching the disk.
+    fn spanish_config() -> nnano_core::config::Config {
+        nnano_core::config::Config::resolve(vec![nnano_core::config::Layer {
+            origin: "test".to_string(),
+            values: vec![(
+                nnano_core::config::Opt::Language,
+                nnano_core::config::Value::Text("es"),
+            )],
+            warnings: Vec::new(),
+        }])
+    }
+
+    #[test]
+    fn the_settings_panel_follows_the_language() {
+        let mut app = App::from_text("nota.txt", "");
+        app.apply_config(spanish_config());
+        app.apply(Action::OpenSettings);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(screen.contains("Idioma"), "{screen}");
+        assert!(screen.contains("Español"), "{screen}");
+        assert!(screen.contains("Tamaño de tabulación"), "{screen}");
+        assert!(screen.contains("↑↓ elegir"), "{screen}");
+    }
+
+    #[test]
+    fn the_status_bar_and_the_help_follow_the_language() {
+        let mut app = App::from_text("nota.txt", "");
+        app.apply_config(spanish_config());
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let status = row_of(&terminal, PANEL_HEIGHT - 1, PANEL_WIDTH);
+        assert!(status.contains("ayuda"), "{status:?}");
+
+        app.body_height = PANEL_HEIGHT - 1;
+        app.apply(Action::OpenHelp);
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let screen = screen(&terminal, PANEL_WIDTH, PANEL_HEIGHT);
+        assert!(screen.contains("Ayuda"), "{screen}");
+        assert!(screen.contains("Guardar en el mismo archivo"), "{screen}");
+        // Chords are keys, not prose: they stay as typed.
+        assert!(screen.contains("Ctrl+S"), "{screen}");
+    }
+
+    #[test]
+    fn a_one_line_prompt_takes_over_the_status_row() {
+        let mut app = App::from_text("notes.txt", "uno\n");
+        app.apply(Action::SaveAs);
+        for ch in "nota.txt".chars() {
+            app.apply(Action::Insert(ch));
+        }
+        let terminal = render_sized(&app, PANEL_WIDTH, PANEL_HEIGHT);
+        let status = row_of(&terminal, PANEL_HEIGHT - 1, PANEL_WIDTH);
+        assert!(status.contains("Save as: nota.txt"), "{status:?}");
+        assert!(status.contains("[Enter saves]"), "{status:?}");
+        assert!(!status.contains("nnano"), "{status:?}");
     }
 
     #[test]
@@ -497,6 +563,9 @@ mod tests {
         assert!(screen.contains("Commands"), "{screen}");
         assert!(screen.contains("Save file"), "{screen}");
         assert!(screen.contains("Settings"), "{screen}");
+        // Each command row carries the key that runs it.
+        assert!(screen.contains("Ctrl+S"), "{screen}");
+        assert!(screen.contains("Alt+,"), "{screen}");
     }
 
     #[test]

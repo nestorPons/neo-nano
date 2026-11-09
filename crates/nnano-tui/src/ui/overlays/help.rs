@@ -1,137 +1,95 @@
 //! The help overlay (`^H` or `F1`): every shortcut that works today.
 //!
-//! Content is grouped by area, one line per binding, and scrolls when the terminal
-//! cannot show it all. Only implemented keys are listed: a help screen that
-//! advertises phase-7 bindings that do not work would be the same lie as a key
-//! that decodes to a silent no-op.
+//! The binding list is **not** written here: it is rendered from
+//! [`crate::term::input::KEYMAP`], the same table `decode` reads, so the help
+//! cannot advertise a key that does nothing and a new binding shows up on its
+//! own. Only what the table cannot describe — the replace prompt's answers and
+//! the mouse — is written by hand, and those rows carry no chord of their own.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::popup_frame;
+use crate::i18n::{Lang, t};
+use crate::term::input::{GROUPS, bindings};
 
-/// One binding: the keys as the user types them, and what they do.
-struct Entry {
-    keys: &'static str,
-    action: &'static str,
-}
-
-const fn entry(keys: &'static str, action: &'static str) -> Entry {
-    Entry { keys, action }
-}
-
-/// The whole reference. Order matters: it is the order on screen.
-const SECTIONS: &[(&str, &[Entry])] = &[
+/// Rows that are not a single chord: the answers inside the replace prompt and
+/// the mouse gestures. They change nothing in `decode`, so they stay text.
+const NOTES: &[(&str, &[(&str, &str)])] = &[
     (
-        "Files",
+        "Prompts",
         &[
-            entry("Ctrl+S", "Save in place"),
-            entry("Ctrl+Q", "Quit (confirms if modified)"),
-            entry("Ctrl+N / Ctrl+T", "New buffer"),
-            entry("Ctrl+W", "Close buffer (confirms)"),
-        ],
-    ),
-    (
-        "Editing",
-        &[
-            entry("Ctrl+Z / Ctrl+Y", "Undo / redo"),
-            entry("Alt+U / Alt+E", "Undo / redo"),
-            entry("Ctrl+X / Ctrl+C / Ctrl+V", "Cut / copy / paste"),
-            entry("Ctrl+K / Ctrl+U", "Cut line / paste"),
-            entry("Ctrl+A / Alt+A", "Select all / start mark"),
-            entry("Alt+6", "Copy the mark"),
-            entry("Alt+Z", "Rectangular mark (Alt+drag too)"),
-            entry("Ctrl+D", "Delete character"),
-            entry("Ctrl+\\ / Alt+R", "Replace"),
-        ],
-    ),
-    (
-        "Move",
-        &[
-            entry("Arrows", "One character / one line"),
-            entry("Home / End", "Start / end of line"),
-            entry("PgUp / PgDn", "One page"),
-            entry("Alt+Up / Alt+Down", "One page"),
-            entry("Ctrl+B / Ctrl+E", "Back one char / end of line"),
-            entry("Ctrl+L", "Repaint the screen"),
-        ],
-    ),
-    (
-        "Search",
-        &[
-            entry("Ctrl+F", "Find"),
-            entry("F3 / Alt+W", "Find next"),
-            entry("Shift+F3 / Alt+B", "Find previous"),
-            entry("Alt+C", "Case sensitivity (in the prompt)"),
-            entry("Alt+R", "Regexp (in the prompt) / replace (outside)"),
-            entry("Alt+B", "Direction (in the find prompt)"),
-        ],
-    ),
-    (
-        "Replace",
-        &[
-            entry("Enter", "Accept the prompt"),
-            entry("y / n", "Replace / skip this match"),
-            entry("a / q", "Replace all / stop"),
-        ],
-    ),
-    (
-        "Interface",
-        &[
-            entry("Ctrl+H / F1", "This help"),
-            entry("Ctrl+P", "Command palette"),
-            entry("Alt+,", "Settings"),
-            entry("Alt+Y", "Syntax highlighting on/off"),
-            entry("Esc", "Close overlay / clear the mark"),
+            ("Enter", "Accept the find or replace prompt"),
+            ("y / n", "Replace or skip this match"),
+            ("a / q", "Replace all or stop the run"),
         ],
     ),
     (
         "Mouse",
         &[
-            entry("Click / drag", "Place the cursor / mark"),
-            entry("Alt+drag", "Rectangular mark"),
-            entry("Wheel", "Scroll the view"),
+            ("Click / drag", "Place the cursor / start the mark"),
+            ("Alt+drag", "Rectangular mark"),
+            ("Wheel", "Scroll the view"),
         ],
     ),
 ];
 
+/// Column where the description starts; the chord column is padded to it.
+const KEYS_WIDTH: usize = 26;
+
+fn heading(title: &str) -> Line<'static> {
+    Line::from(format!(" {title}"))
+        .style(Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED))
+}
+
+/// `keys` in bold on the left, `label` in the body colour; one row per line.
+fn row(keys: &str, label: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("   {keys:<KEYS_WIDTH$}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(label.to_string()),
+    ])
+}
+
+/// The hand-written rows, for the translation coverage test: every label here
+/// has to be in `crate::i18n`.
+pub fn notes() -> &'static [(&'static str, &'static [(&'static str, &'static str)])] {
+    NOTES
+}
+
 /// Text of every line in the panel: headings plus one row per binding, with a
-/// blank line before each section but the first.
-fn lines() -> Vec<Line<'static>> {
+/// blank line before each section but the first. The chord column stays as
+/// typed (`Ctrl+S`); only the descriptions are translated.
+fn lines(lang: Lang) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for (index, (heading, entries)) in SECTIONS.iter().enumerate() {
+    for (index, group) in GROUPS.iter().enumerate() {
         if index > 0 {
             lines.push(Line::from(""));
         }
-        lines.push(
-            Line::from(format!(" {heading}"))
-                .style(Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
-        );
-        for entry in *entries {
-            lines.push(Line::from(vec![
-                ratatui::text::Span::styled(
-                    format!("   {:<28}", entry.keys),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                ratatui::text::Span::raw(entry.action),
-            ]));
+        lines.push(heading(t(lang, group.title())));
+        for binding in bindings(*group) {
+            lines.push(row(&binding.chord.label(), t(lang, binding.label)));
+        }
+    }
+    for (title, rows) in NOTES {
+        lines.push(Line::from(""));
+        lines.push(heading(t(lang, title)));
+        for (keys, label) in *rows {
+            lines.push(row(keys, t(lang, label)));
         }
     }
     lines
 }
 
-/// How many lines the panel would need in total.
+/// How many lines the panel would need in total: the same in every language,
+/// because translation changes text, never the row count.
 pub fn content_len() -> usize {
-    // `lines()` builds owned text; counting here keeps it a pure read.
-    SECTIONS.len()
-        + SECTIONS
-            .iter()
-            .map(|(_, entries)| entries.len())
-            .sum::<usize>()
-        + SECTIONS.len().saturating_sub(1)
+    lines(Lang::En).len()
 }
 
 /// Scroll offset of the reference.
@@ -166,13 +124,13 @@ impl Help {
 }
 
 /// Floating panel with the reference and a scroll hint.
-pub fn draw(frame: &mut Frame, area: Rect, help: &Help) {
-    let lines = lines();
+pub fn draw(frame: &mut Frame, area: Rect, help: &Help, lang: Lang) {
+    let lines = lines(lang);
     let width = 72.min(area.width);
     let height = u16::try_from(lines.len() + 3)
         .unwrap_or(u16::MAX)
         .min(area.height);
-    let inner = popup_frame(frame, area, width, height, "Help");
+    let inner = popup_frame(frame, area, width, height, t(lang, "Help"));
     if inner.height == 0 {
         return;
     }
@@ -184,7 +142,7 @@ pub fn draw(frame: &mut Frame, area: Rect, help: &Help) {
         body,
     );
     frame.render_widget(
-        Paragraph::new(" \u{2191}\u{2193} PgUp PgDn scroll \u{00b7} Esc closes")
+        Paragraph::new(t(lang, " ↑↓ PgUp PgDn scroll · Esc closes"))
             .style(Style::default().add_modifier(Modifier::DIM)),
         footer,
     );
@@ -192,11 +150,39 @@ pub fn draw(frame: &mut Frame, area: Rect, help: &Help) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Help, content_len};
+    use super::{Help, content_len, lines};
+    use crate::term::input::KEYMAP;
+
+    #[test]
+    fn the_help_lists_every_binding_in_the_keymap() {
+        let screen: Vec<String> = lines(crate::i18n::Lang::En)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect()
+            })
+            .collect();
+        let text = screen.join("\n");
+        for binding in KEYMAP {
+            let chord = binding.chord.label();
+            assert!(
+                text.contains(&format!("{chord} ")),
+                "{chord} is in the keymap but not in the help"
+            );
+            assert!(
+                text.contains(binding.label),
+                "{} is missing its description",
+                binding.chord.label()
+            );
+        }
+    }
 
     #[test]
     fn the_content_has_every_section_and_binding() {
-        assert!(content_len() > 30, "the reference should cover the keymap");
+        assert!(content_len() > KEYMAP.len(), "headings and notes too");
+        assert!(content_len() > 55, "the reference should cover the keymap");
     }
 
     #[test]

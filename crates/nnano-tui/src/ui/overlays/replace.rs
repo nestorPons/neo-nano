@@ -15,6 +15,7 @@ use ratatui::widgets::Paragraph;
 
 use super::find::FindSettings;
 use super::prompt::{Prompt, draw_prompt_row};
+use crate::i18n::{Lang, t, tf};
 
 /// Which prompt (or question) currently owns the keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,38 +94,44 @@ impl Replace {
     }
 
     /// Active toggles, shown right-aligned on the prompt row.
-    pub fn flags(&self) -> String {
+    pub fn flags(&self, lang: Lang) -> String {
         let mut flags = Vec::new();
         if self.case_sensitive {
-            flags.push("[Case]");
+            flags.push(t(lang, "[Case]"));
         }
         if self.regexp {
-            flags.push("[Regexp]");
+            flags.push(t(lang, "[Regexp]"));
         }
         flags.join(" ")
     }
 }
 
 /// Draw the stage on the status row: a prompt, or the per-match question.
-pub fn draw_status(frame: &mut Frame, area: Rect, replace: &Replace) {
+pub fn draw_status(frame: &mut Frame, area: Rect, replace: &Replace, lang: Lang) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     match replace.stage {
-        Stage::Search => {
-            draw_prompt_row(frame, area, " Search: ", &replace.search, &replace.flags())
-        }
+        Stage::Search => draw_prompt_row(
+            frame,
+            area,
+            t(lang, " Search: "),
+            &replace.search,
+            &replace.flags(lang),
+        ),
         Stage::Replacement => draw_prompt_row(
             frame,
             area,
-            " Replace with: ",
+            t(lang, " Replace with: "),
             &replace.replacement,
-            &replace.flags(),
+            &replace.flags(lang),
         ),
         Stage::Confirm => {
-            let text = format!(
+            let done = replace.replaced().to_string();
+            let text = tf(
+                lang,
                 " Replace this?  y yes  n no  a all  q quit   ({} done)",
-                replace.replaced()
+                &[&done],
             );
             frame.render_widget(
                 Paragraph::new(text).style(Style::default().add_modifier(Modifier::REVERSED)),

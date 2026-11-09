@@ -74,6 +74,11 @@ La búsqueda imita a nano: **no es incremental** (se ejecuta al aceptar el promp
 | Paleta de comandos | `Ctrl+P` | — |
 | Alternar resaltado de sintaxis | `Alt+Y` | `Alt+Y` |
 | Refrescar pantalla | `Ctrl+L` | `Ctrl+L` |
+| Idioma de la interfaz | `Alt+,` → Idioma | `--language <código>` |
+
+La paleta (`Ctrl+P`) muestra a la derecha la tecla de cada comando, y escribir una tecla (`ctrl+q`) filtra por atajo. La ayuda (`Ctrl+H`) y la paleta se generan desde la misma tabla de atajos que interpreta el teclado, así que nunca anuncian una tecla que no funcione.
+
+La interfaz habla diez idiomas: English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia y 日本語. Elige uno en los ajustes (`Alt+,` → Idioma) o con `--language es`; `language = "auto"` en `config.toml` sigue a `$LC_ALL`/`$LANG`.
 
 ## Qué cambia respecto a nano
 
@@ -104,3 +109,14 @@ Se conservan sin cambios: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctr
 - nnano usa el ratón si la opción `mouse` está activa (por defecto): clic coloca el cursor, arrastrar marca, `Alt`+arrastrar marca un rectángulo y la rueda desplaza sin mover el cursor.
 - Grupos de deshacer: se agrupa por palabra y por una pausa de 400 ms; cortar, pegar, guardar y cambiar de búfer cierran el grupo. «Reemplazar todo» es un solo paso.
 - `Ctrl+H` abre la referencia de atajos. Retroceso es la tecla Backspace del terminal (`0x7F`): si tu terminal envía `0x08` al pulsar Backspace, esa tecla abre la ayuda; configúralo para enviar `0x7F`.
+
+## Prompts y archivo de recuperación
+
+- `Alt+S` pide una ruta, y también `Ctrl+S` en un búfer sin nombre (`nnano -`, un búfer nuevo o un guardar-como cancelado). `Tab` completa la ruta en *Guardar como*, *Abrir* e *Insertar archivo*: una sola coincidencia la rellena, varias la extienden al prefijo común.
+- `Alt+S` escribe un archivo nuevo y adopta su nombre: la barra de búferes, la barra de estado y la gramática de sintaxis lo siguen. Si la escritura falla, se conserva el nombre anterior.
+- `Alt+X` ejecuta la línea con `sh -c` e inserta su salida estándar en el cursor como un solo paso de deshacer; la barra de estado informa el código de salida y la primera línea de stderr.
+- `Ctrl+R` relee del disco el archivo de este búfer y reemplaza el texto; el historial de deshacer del texto anterior se descarta. Si hay cambios sin guardar, pregunta una vez (`Ctrl+R` otra vez recarga, `Ctrl+S` guarda).
+- `Alt+I` pide un archivo e inserta su texto en el cursor como un solo paso de deshacer; `Tab` completa la ruta. El búfer conserva su nombre y su codificación.
+- Mientras un búfer tiene cambios sin guardar, nnano escribe una copia de recuperación 2 s después de la última edición en `$XDG_STATE_HOME/nnano/recovery/`. Un cuelgue o una sesión SSH cortada se restauran automáticamente al arrancar (`recovered unsaved changes for …`); guardar o salir limpiamente la borran.
+- `Ctrl+C` y `Alt+6` siempre copian al registro interno. Activa la opción `osc52` (`--osc52`) para enviar además la copia al portapapeles del sistema, con tope de 64 KiB; si se trunca, se avisa en la barra de estado.
+- `Ctrl+J` reajusta el párrafo del cursor (o las líneas marcadas) al ancho del área de texto, conservando la sangría de la primera línea. Es un solo paso de deshacer.

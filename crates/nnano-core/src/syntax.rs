@@ -162,6 +162,7 @@ impl Grammar {
                 };
                 let end = start + matched.chars().count();
                 scanned_byte = found.end();
+                scanned_char = end;
                 for slot in &mut owner[start.min(total)..end.min(total)] {
                     if slot.is_none() {
                         *slot = u16::try_from(index).ok();
@@ -492,6 +493,28 @@ icolor cyan "todo"
         assert!(set.select("src/main.rs").is_some());
         assert!(set.select("main.py").is_none());
         assert_eq!(set.get("rust").unwrap().name, "rust");
+    }
+
+    #[test]
+    fn a_rule_can_match_several_times_on_one_line() {
+        // Regression: the char cursor was not advanced past a match, so the
+        // second and later hits of the same rule landed over earlier text.
+        let set = set();
+        let grammar = set.get("rust").unwrap();
+        let line = "let a = fn(b) + let;";
+        let spans = grammar.highlight(line, MAX_LINE);
+        let text: Vec<(&str, Option<Colour>)> = spans
+            .iter()
+            .map(|span| (&line[span.start..span.end], span.style.foreground))
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                ("let", Some(Colour::Yellow)),
+                ("fn", Some(Colour::Yellow)),
+                ("let", Some(Colour::Yellow)),
+            ]
+        );
     }
 
     #[test]
