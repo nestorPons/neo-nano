@@ -218,3 +218,9 @@
 - **Version 0.1.1**, not an edit of 0.1.0: `packaging/nnano` builds the *tagged* tarball, so files added after the tag could not be installed by a 0.1.0 package. Bumped the workspace version (the status bar and `--version` both read `CARGO_PKG_VERSION`), tagged `v0.1.1`, published the release, recomputed the sha256 (`074ca6c9…c62ae0`) and rebuilt the package.
 - Both recipes install `/usr/share/man/man1/nnano.1`, `bash-completion/completions/nnano`, `zsh/site-functions/_nnano` and `fish/vendor_completions.d/nnano.fish`.
 - Verified: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` → **365 tests** (182 core, 171 TUI, 8 CLI, 4 in `tests/docs.rs`). `bash -n` and `zsh -n` clean. `makepkg` built `nnano-0.1.1-1-x86_64.pkg.tar.xz`: binary, gzipped man page, the three completions and the license; `--version` from inside the package says `nnano 0.1.1`; no `$srcdir` warning.
+
+## 2026-11-09 (cont. — AUR publish runbook)
+- Asked "how do I upload to yay"; the honest answer is that nothing uploads to `yay`. `packaging/README.md` now says so and documents the real path: an AUR account, a registered SSH key, `git clone ssh://aur@aur.archlinux.org/<pkg>.git`, commit `PKGBUILD` + `.SRCINFO`, push.
+- Verified `nnano` and `nnano-git` are unclaimed on the AUR and that the local key is not registered yet (`Permission denied (publickey)`).
+- Documented the two traps that bite a maintainer here: the AUR never rebuilds `.SRCINFO`, and `makepkg --printsrcinfo` does not evaluate `pkgver()`, so a VCS package's `pkgver` must be refreshed by hand.
+- Both `.SRCINFO` files verified identical to `makepkg --printsrcinfo`; `namcap` is absent on this host.
