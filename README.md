@@ -1,4 +1,9 @@
-# neo-nano
+ _   _ _____ ___       _   _   _    _   _  ___
+| \ | | ____/ _ \     | \ | | / \  | \ | |/ _ \
+|  \| |  _|| | | |    |  \| |/ _ \ |  \| | | | |
+| |\  | |__| |_| |    | |\  / ___ \| |\  | |_| |
+|_| \_|_____\___/     |_| \_/_/   \_\_| \_|\___/
+
 
 A modern terminal text editor that keeps nano's ethos — **simple, fast, easy, comfortable** — with the interface people expect from a TUI today. Written in Rust.
 
