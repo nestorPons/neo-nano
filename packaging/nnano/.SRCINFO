@@ -1,0 +1,16 @@
+pkgbase = nnano
+	pkgdesc = A modern, nano-compatible terminal text editor
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/nestorPons/neo-nano
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cargo
+	depends = gcc-libs
+	provides = nnano
+	conflicts = nnano-git
+	source = nnano-0.1.0.tar.gz::https://github.com/nestorPons/neo-nano/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = 9e26061783cd2ad8aab4235d84ea94810d8cef0582586123b90738bc04407258
+
+pkgname = nnano

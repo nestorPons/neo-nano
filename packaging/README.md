@@ -1,46 +1,15 @@
 # Packaging
 
 Distribution is Arch/AUR first, as decided in `AGENTS.md`; the repository only
-carries the recipe, the server never sees it.
+carries the recipes, the server never sees them.
 
-## `nnano-git`
+| Directory | Package | Source |
+|---|---|---|
+| `nnano/` | `nnano` (stable) | the `v0.1.0` tag tarball, checksummed |
+| `nnano-git/` | `nnano-git` | `main`, `pkgver()` from the commit count |
 
-Built from `main`, no checksum needed while there is no release tarball.
-
-```sh
-cd packaging/nnano-git
-makepkg -si          # build, run the test suite, install
-makepkg --printsrcinfo > .SRCINFO
-```
-
-Publishing to the AUR (after creating the AUR repository):
-
-```sh
-git clone ssh://aur@aur.archlinux.org/nnano-git.git
-cp packaging/nnano-git/{PKGBUILD,.SRCINFO} nnano-git/
-cd nnano-git && git add . && git commit -m "0.1.0" && git push
-```
-
-## Stable `nnano` (after the first tagged release)
-
-The only differences from the `-git` recipe:
-
-```diff
--pkgname=nnano-git
-+pkgname=nnano
--pkgver=0.1.0
-+pkgver=0.1.0
--source=("$pkgname::git+https://github.com/nestorPons/neo-nano.git")
--sha256sums=('SKIP')
-+source=("$pkgname-$pkgver.tar.gz::https://github.com/nestorPons/neo-nano/archive/v$pkgver.tar.gz")
-+sha256sums=('...')
-```
-
-Drop `git` from `makedepends`, keep `cargo`, and regenerate the checksum with
-`updpkgsums` once `v0.1.0` exists on GitHub. `prepare()`/`build()`/`check()` and
-`package()` stay as they are.
-
-## What is installed
+Both run the test suite in `check()`, strip `$srcdir` out of the binary with
+`--remap-path-prefix`, and install the same things:
 
 | Path | Content |
 |---|---|
@@ -50,3 +19,32 @@ Drop `git` from `makedepends`, keep `cargo`, and regenerate the checksum with
 | `/usr/share/doc/nnano/shortcuts.<lang>.md` | the ten keymap references |
 
 A man page is not shipped yet; `nnano --help` and `Ctrl+H` are the reference.
+
+## Build locally
+
+```sh
+cd packaging/nnano        # or packaging/nnano-git
+makepkg -si               # build, run the tests, install
+makepkg --printsrcinfo > .SRCINFO
+```
+
+## Publish to the AUR
+
+```sh
+git clone ssh://aur@aur.archlinux.org/nnano.git
+cp packaging/nnano/{PKGBUILD,.SRCINFO} nnano/
+cd nnano && git add . && git commit -m "0.1.0" && git push
+```
+
+Same for `nnano-git`.
+
+## The stable recipe, step by step
+
+1. Tag and push `vX.Y.Z`, then create the GitHub release (the release notes are
+   the matching `CHANGELOG.md` section).
+2. Bump `pkgver` and `pkgrel` in `nnano/PKGBUILD`.
+3. `updpkgsums` — it downloads the new tag tarball and rewrites `sha256sums`.
+4. `makepkg --printsrcinfo > .SRCINFO`, commit, push.
+
+The archive extracts to `neo-nano-<tag>/`, not `nnano-<pkgver>/`; `_srcname`
+carries that difference so the functions can `cd` into it.

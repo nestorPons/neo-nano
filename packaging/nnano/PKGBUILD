@@ -1,0 +1,53 @@
+# Maintainer: Nestor Pons <nestorpons@gmail.com>
+#
+# Stable release, built from the GitHub tag tarball. `nnano-git` tracks main.
+pkgname=nnano
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A modern, nano-compatible terminal text editor"
+arch=('x86_64' 'aarch64')
+url="https://github.com/nestorPons/neo-nano"
+license=('MIT')
+depends=('gcc-libs')
+makedepends=('cargo')
+provides=('nnano')
+conflicts=('nnano-git')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/nestorPons/neo-nano/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('9e26061783cd2ad8aab4235d84ea94810d8cef0582586123b90738bc04407258')
+
+# The GitHub archive extracts to <repo>-<tag>, not <pkgname>-<pkgver>.
+_srcname="neo-nano-$pkgver"
+
+prepare() {
+  cd "$_srcname"
+  export CARGO_HOME="$srcdir/cargo"
+  cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+  cd "$_srcname"
+  export CARGO_HOME="$srcdir/cargo"
+  # Panic locations embed the path of every dependency source. Remap them so the
+  # binary does not carry $srcdir (reproducibility and makepkg's check).
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir/cargo/registry=/cargo/registry --remap-path-prefix=$srcdir=/build"
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_srcname"
+  export CARGO_HOME="$srcdir/cargo"
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir/cargo/registry=/cargo/registry --remap-path-prefix=$srcdir=/build"
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$_srcname"
+  install -Dm755 target/release/nnano "$pkgdir/usr/bin/nnano"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/nnano/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/nnano/README.md"
+  install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/nnano/CHANGELOG.md"
+  for lang in en es zh-Hans ja hi ar fr bn pt id; do
+    install -Dm644 "docs/$lang/shortcuts.md" \
+      "$pkgdir/usr/share/doc/nnano/shortcuts.$lang.md"
+  done
+}
