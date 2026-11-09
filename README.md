@@ -26,6 +26,8 @@ cargo build --release
 install -Dm755 target/release/nnano ~/.local/bin/nnano
 ```
 
+The package installs `nnano(1)` (`man nnano`) and shell completions for bash, zsh and fish. From source they live in `man/` and `completions/`.
+
 ## Quick start
 
 ```sh

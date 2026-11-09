@@ -10,7 +10,8 @@ Rust rewrite of the nano editor: a modern TUI that keeps nano's ethos — **simp
 - Registry rows: `tab_size`, `case_sensitive`, `mouse`, `syntax`, `osc52`, `language` — each wired to the CLI, TOML, `.nanorc` (where nano has one) and the settings overlay by the same table.
 - **Ten interface languages** (2026-11-06): English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia, 日本語. `language` is the first `Kind::Enum` row (a cycling picker in the overlay); the strings live in one `nnano-tui::i18n` table keyed by the English source text, and a coverage test fails the build when a binding, command, option label or help note has no row.
 - **`^R` reload and `M-I` insert-file done** (2026-11-09): `^R` replaces the buffer with the file on disk (dirty buffers ask once; the old undo history is dropped, since its ranges name text that no longer exists; a missing or undecodable file changes nothing) and `M-I` inserts a file's text at the cursor as one undo step behind a path prompt that accepts `Tab`. Both are palette commands too, so the keymap table no longer advertises anything inert.
-- Still open: no LSP, no plugins, no packaging yet.
+- **Man page and shell completions done** (2026-11-09, 0.1.1): `man/nnano.1` and `completions/{nnano.bash,_nnano,nnano.fish}`, hand-written because the dependency set has no completion generator. `crates/nnano/tests/docs.rs` is the drift guard: every registry flag, every language code and the two universal flags must be in each file, and the man page header must carry `CARGO_PKG_VERSION`, so a version bump without the man page does not build. Both recipes install them.
+- Still open: no LSP, no plugins.
 - Undo is an operation log in **char** ranges (the rope indexes by char; storing bytes would need a snap-to-boundary on every line change). Groups close on a 400 ms pause, a word boundary, and hard boundaries (cut, paste, save, buffer switch); "replace all" merges into one group. No undo across runs.
 - Selection is half-open `[anchor, head)` in chars: "select all" is exactly the buffer, and a cursor at a line end selects nothing phantom. Block mode is `M-Z` or Alt+drag; copy is `^C`/`M-6`, cut `^X`, paste `^V`/`^U`, and `^K` cuts whole lines and accumulates.
 - Help is a floating, scrollable reference of every implemented binding (`^H` or `F1`, `↑↓`/`PgUp`/`PgDn`/wheel, `Esc`), and the status bar advertises `^H: help`.
@@ -414,6 +415,7 @@ Closed decisions:
 - **AI-facing docs in English** (this file, `LOG.md`, design notes, ADRs).
 - **User-facing docs in en, es, zh-Hans, ja, hi, ar, fr, bn, pt, id** under `docs/<lang>/`; keep all ten in sync when editing.
 - **Interface strings are translated, key names are not**: `Ctrl+S`, `Alt+,` and file paths stay as typed in every language. A new user-visible string goes into `nnano-tui::i18n` with one column per language; `t()` falls back to English so a missing row degrades instead of breaking the UI.
+- **`man/nnano.1` and `completions/` stay English**: a man page is not translated in this project, and a completion is option text. Both are drift-guarded against the registry by `crates/nnano/tests/docs.rs`; translating them is a separate decision, not an omission.
 - Code, identifiers, commit messages, CLI help: English.
 
 ## Inherited rules

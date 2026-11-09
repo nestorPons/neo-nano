@@ -2,6 +2,14 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-11-09
+
+### Added
+
+- `nnano(1)` man page: options, the key reference, files, environment and the save/encoding guarantees.
+- Shell completions for bash, zsh and fish, covering every option and the language codes.
+- Both are installed by the `nnano` and `nnano-git` packages, and a test fails the build when a registry flag is missing from the man page or a completion.
+
 ## [0.1.0] — 2026-11-09
 
 First release. A nano-compatible terminal editor with a desktop-first keymap.
@@ -23,4 +31,5 @@ First release. A nano-compatible terminal editor with a desktop-first keymap.
 - No plugins, LSP or split view, by design.
 - `Ctrl+S`, `Ctrl+Q`, `Ctrl+C` and `Ctrl+Z` need a terminal without flow control and with `ISIG` disabled; nnano sets both up itself.
 
+[0.1.1]: https://github.com/nestorPons/neo-nano/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nestorPons/neo-nano/releases/tag/v0.1.0

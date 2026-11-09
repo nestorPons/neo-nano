@@ -1,0 +1,183 @@
+.TH NNANO 1 "2026-11-09" "nnano 0.1.1" "User Commands"
+.SH NAME
+nnano \- a modern, nano\-compatible terminal text editor
+.SH SYNOPSIS
+.B nnano
+.RI [ options ]
+.RI [ file ]
+.SH DESCRIPTION
+.B nnano
+is a terminal text editor that keeps nano's ethos \- simple, fast, easy,
+comfortable \- with a desktop\-style keymap, mouse support, multiple buffers,
+grouped undo and syntax highlighting from nano's
+.B .nanorc
+grammars.
+.PP
+With no
+.I file
+it opens an empty buffer. A
+.I file
+of
+.B \-
+reads standard input into a buffer with no name; saving it asks for a path.
+.PP
+Every option can also be set in
+.I config.toml
+and in the settings overlay
+.RB ( Alt+, ).
+The command line wins over the files, which win over
+.BR ~/.nanorc ,
+which wins over the built\-in defaults.
+.SH OPTIONS
+.TP
+.BR \-T ", " \-\-tabsize " " \fIN\fR
+Columns a tab advances, 1\-64 (default 8). The same value drives the renderer
+and the cursor arithmetic, so a tab never shifts the cursor off its glyph.
+.TP
+.BR \-C ", " \-\-casesensitive ", " \-\-no\-casesensitive
+Make searches match case by default (default off). The find prompt can flip
+this per search with
+.BR Alt+C .
+.TP
+.BR \-\-syntax ", " \-\-no\-syntax
+Colour lines with the grammar of the file's extension (default on).
+.BR Alt+Y
+toggles it for the session.
+.TP
+.BR \-m ", " \-\-mouse ", " \-\-no\-mouse
+Use the mouse: click places the cursor, drag marks, Alt+drag marks a rectangle
+and the wheel scrolls without moving the cursor (default on).
+.TP
+.BR \-\-osc52 ", " \-\-no\-osc52
+Also send a copy to the system clipboard over OSC 52, capped at 64 KiB
+(default off). The internal register always holds the text; the cap is reported
+in the status bar when it truncates.
+.TP
+.BI \-\-language " LANG"
+Interface language:
+.BR auto ,
+.BR en ,
+.BR zh-Hans ,
+.BR hi ,
+.BR es ,
+.BR ar ,
+.BR fr ,
+.BR bn ,
+.BR pt ,
+.BR id
+or
+.BR ja
+(default
+.BR en ).
+.B auto
+follows
+.BR $LC_ALL ,
+.B $LC_MESSAGES
+or
+.BR $LANG .
+.TP
+.BR \-h ", " \-\-help
+Print the options and exit.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.SH KEYS
+The full reference is the
+.B Ctrl+H
+overlay inside the editor; it is generated from the same table the decoder
+reads, so it lists every implemented binding.
+.nf
+
+  Files      Ctrl+S save in place            Alt+S save as
+             Ctrl+O open by path             Ctrl+R reload from disk
+             Alt+I  insert a file            Ctrl+W close buffer
+             Ctrl+Q quit                     Ctrl+N new buffer
+  Editing    Ctrl+Z undo   Ctrl+Y redo       Ctrl+X cut    Ctrl+C copy
+             Ctrl+V paste                     Ctrl+K cut line
+             Ctrl+A select all               Alt+A start mark
+             Alt+Z  rectangular mark         Ctrl+D delete character
+             Ctrl+J justify                  Ctrl+\\ replace
+             Alt+X  run a command            Alt+Y  toggle syntax
+  Move       arrows, Home/End, PgUp/PgDn     Ctrl+left/right words
+             Ctrl+G go to line               Alt+\\ first line  Alt+/ last
+  Search     Ctrl+F find                     F3 / Shift+F3 next / previous
+             Alt+C  case (in a prompt)       Alt+R  regexp (in a prompt)
+  Interface  Ctrl+P palette                  Alt+, settings
+             Ctrl+H help                     Ctrl+L refresh
+.fi
+.PP
+A dirty buffer confirms before
+.B Ctrl+Q
+or
+.BR Ctrl+W ,
+and a dirty reload confirms before
+.BR Ctrl+R .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/nnano/config.toml
+User configuration; falls back to
+.IR ~/.config/nnano/config.toml .
+Parsed as TOML and validated against the option registry: an unknown key warns
+once and is ignored.
+.TP
+.I /etc/nnano/config.toml
+Optional system configuration.
+.TP
+.I ~/.nanorc
+Legacy nano configuration, read only. nano and nnano are safe to use side by
+side; nnano never writes, rewrites or migrates it.
+.TP
+.I $XDG_STATE_HOME/nnano/recovery/
+Recovery snapshots of dirty buffers, one per file, written 2 seconds after the
+last edit and removed on save, on close and on a clean exit. Falls back to
+.IR ~/.local/state/nnano/recovery/ .
+.TP
+.I ~/.config/nnano/syntax/*.nanorc
+Extra syntax grammars, in nano's format. Distro grammars are inherited from
+.IR /usr/share/nnano/syntax " and " /usr/share/nano .
+.SH ENVIRONMENT
+.TP
+.B XDG_CONFIG_HOME
+Where the user configuration lives when set.
+.TP
+.B XDG_STATE_HOME
+Where the recovery snapshots live when set.
+.TP
+.BR LC_ALL ", " LC_MESSAGES ", " LANG
+Read only for
+.BR "\-\-language auto" .
+.SH "EXIT STATUS"
+.TP
+.B 0
+The editor closed normally.
+.TP
+.B 1
+The terminal could not be initialised, or a file could not be read.
+.SH NOTES
+.B Ctrl+S
+and
+.B Ctrl+Q
+need a terminal without XON/XOFF flow control and with
+.B ISIG
+off; nnano sets both up itself before the first frame.
+.PP
+Saving is in place: the file is truncated and rewritten, then flushed and
+fsynced. There is no
+.I file~
+backup and no temp\-file rename, so hardlinks, symlinks and watched inodes
+survive \- and an interrupted write leaves a truncated file. The recovery
+snapshot is the only net.
+.PP
+Encoding is detected, never transcoded: UTF\-8 when the bytes parse as UTF\-8,
+Latin\-1 otherwise, and UTF\-16 is refused instead of guessed. Arabic is drawn in
+logical order and the terminal decides the visual order; there is no bidi
+reshaping.
+.SH "SEE ALSO"
+.BR nano (1),
+.BR vi (1)
+.PP
+Full documentation:
+.IR https://github.com/nestorPons/neo\-nano .
+.SH BUGS
+Report at
+.IR https://github.com/nestorPons/neo\-nano/issues .

@@ -1,0 +1,19 @@
+#compdef nnano
+#
+# zsh completion for nnano(1). Installed to
+# /usr/share/zsh/site-functions/_nnano by the package.
+
+_arguments -s -S \
+  '(- *)'{-h,--help}'[Print the options and exit]' \
+  '(- *)'{-V,--version}'[Print the version and exit]' \
+  '(-T --tabsize)'{-T,--tabsize}'[Columns a tab advances; 1-64]:N:' \
+  '(-C --casesensitive)'{-C,--casesensitive}'[Make searches match case by default]' \
+  '--no-casesensitive[Turn case_sensitive off]' \
+  '--syntax[Colour lines with the grammar of the file extension]' \
+  '--no-syntax[Turn syntax off]' \
+  '(-m --mouse)'{-m,--mouse}'[Click to place the cursor, drag to select, wheel to scroll]' \
+  '--no-mouse[Turn mouse off]' \
+  '--osc52[Also send a copy to the system clipboard, capped at 64 KiB]' \
+  '--no-osc52[Turn osc52 off]' \
+  '--language[Interface language; auto follows the locale]:language:(auto en zh-Hans hi es ar fr bn pt id ja)' \
+  '*:file:_files'
