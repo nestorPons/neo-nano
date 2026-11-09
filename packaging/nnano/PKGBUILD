@@ -13,7 +13,7 @@ makedepends=('cargo')
 provides=('nnano')
 conflicts=('nnano-git')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/nestorPons/neo-nano/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('9e26061783cd2ad8aab4235d84ea94810d8cef0582586123b90738bc04407258')
+sha256sums=('074ca6c94d2060d1eabbc7231494430e5bf4e44f85a9ef33f763fa0522c62ae0')
 
 # The GitHub archive extracts to <repo>-<tag>, not <pkgname>-<pkgver>.
 _srcname="neo-nano-$pkgver"
