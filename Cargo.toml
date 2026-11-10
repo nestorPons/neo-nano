@@ -15,7 +15,7 @@ rust-version = "1.88"
 authors = ["Nestor Pons <nestorpons@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/nestorPons/neo-nano"
-homepage = "https://github.com/nestorPons/neo-nano"
+homepage = "https://nestorpons.github.io/neo-nano/"
 readme = "README.md"
 
 # Release is what ships, so it is tuned once here rather than per crate: thin
