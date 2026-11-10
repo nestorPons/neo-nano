@@ -28,6 +28,11 @@ and in the settings overlay
 The command line wins over the files, which win over
 .BR ~/.nanorc ,
 which wins over the built\-in defaults.
+.PP
+The right edge of the text area carries a one\-column scrollbar, and the status
+bar shows
+.IR line:column/total :
+the cursor line, its visual column and the number of lines in the document.
 .SH OPTIONS
 .TP
 .BR \-T ", " \-\-tabsize " " \fIN\fR
@@ -45,8 +50,9 @@ Colour lines with the grammar of the file's extension (default on).
 toggles it for the session.
 .TP
 .BR \-m ", " \-\-mouse ", " \-\-no\-mouse
-Use the mouse: click places the cursor, drag marks, Alt+drag marks a rectangle
-and the wheel scrolls without moving the cursor (default on).
+Use the mouse: click places the cursor, drag marks, Alt+drag marks a rectangle,
+the wheel scrolls without moving the cursor, and clicking the scrollbar on the
+right jumps to that part of the file (default on).
 .TP
 .BR \-\-osc52 ", " \-\-no\-osc52
 Also send a copy to the system clipboard over OSC 52, capped at 64 KiB
@@ -99,6 +105,7 @@ reads, so it lists every implemented binding.
              Ctrl+J justify                  Ctrl+\\ replace
              Alt+X  run a command            Alt+Y  toggle syntax
   Move       arrows, Home/End, PgUp/PgDn     Ctrl+left/right words
+             Shift+up/down extend the mark by lines
              Ctrl+G go to line               Alt+\\ first line  Alt+/ last
   Search     Ctrl+F find                     F3 / Shift+F3 next / previous
              Alt+C  case (in a prompt)       Alt+R  regexp (in a prompt)

@@ -8,8 +8,9 @@
 //! decodes to its own action.
 //!
 //! Rows are matched in order and a row's modifiers are a *subset* of the event's,
-//! so `Alt+Up` must sit before `Up`; `Shift` is significant only for function
-//! keys (`Shift+F3` is not `F3`), while `Ctrl+Shift+H` is still `^H`.
+//! so `Alt+Up` must sit before `Up` and `Shift+Up` before `Up`; `Shift` is
+//! significant only for function keys (`Shift+F3` is not `F3`), while
+//! `Ctrl+Shift+H` is still `^H`.
 //!
 //! Keys that are modal in nano decode to one `Action` and are interpreted by the
 //! focus: `M-B` is "backwards" everywhere (repeat the search outside a prompt,
@@ -414,6 +415,23 @@ pub const KEYMAP: &[Binding] = &[
         Group::Move,
         "One character right",
     ),
+    // Shift+arrows start the mark and extend it, editor-style. They must precede
+    // the plain arrows: a row matches when its modifiers are a subset of the
+    // event's, so `Shift+Up` would otherwise land on `MoveUp`.
+    bind(
+        KeyCode::Up,
+        KeyModifiers::SHIFT,
+        Action::SelectUp,
+        Group::Move,
+        "Extend the mark one line up",
+    ),
+    bind(
+        KeyCode::Down,
+        KeyModifiers::SHIFT,
+        Action::SelectDown,
+        Group::Move,
+        "Extend the mark one line down",
+    ),
     bind(
         KeyCode::Up,
         KeyModifiers::NONE,
@@ -684,6 +702,8 @@ mod tests {
             (plain(KeyCode::Right), Action::MoveRight),
             (plain(KeyCode::Up), Action::MoveUp),
             (plain(KeyCode::Down), Action::MoveDown),
+            (key(KeyCode::Up, KeyModifiers::SHIFT), Action::SelectUp),
+            (key(KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown),
             (plain(KeyCode::Home), Action::MoveLineStart),
             (plain(KeyCode::End), Action::MoveLineEnd),
             (plain(KeyCode::PageUp), Action::PageUp),

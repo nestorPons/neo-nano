@@ -114,6 +114,10 @@ pub enum Action {
     MoveWordRight,
     MoveUp,
     MoveDown,
+    /// `Shift+↑`: extend the mark one line up, starting one if there is none.
+    SelectUp,
+    /// `Shift+↓`: extend the mark one line down, starting one if there is none.
+    SelectDown,
     MoveLineStart,
     MoveLineEnd,
     MoveFileStart,
@@ -299,6 +303,8 @@ impl Editor {
             }
             Action::MoveUp => self.move_vertical(-1),
             Action::MoveDown => self.move_vertical(1),
+            Action::SelectUp => self.extend_vertical(-1),
+            Action::SelectDown => self.extend_vertical(1),
             Action::MoveLineStart => {
                 self.cursor = Cursor::new(self.cursor.line(), 0);
                 self.goal_col = None;
@@ -353,6 +359,18 @@ impl Editor {
         self.cursor = Cursor::new(line, col);
         self.goal_col = Some(goal);
         self.follow();
+    }
+
+    /// `Shift+↑`/`Shift+↓`: a mark starts at the cursor when there is none, then
+    /// the cursor moves and [`Editor::follow`] drags the head with it, so the
+    /// marked rows grow under the cursor. The visual column is kept, as in a
+    /// plain vertical move.
+    fn extend_vertical(&mut self, delta: isize) {
+        if self.selection.is_none() {
+            let mode = self.mark_mode();
+            self.selection = Some(Selection::new(self.cursor, self.cursor, mode));
+        }
+        self.move_vertical(delta);
     }
 
     pub fn selection(&self) -> Option<&Selection> {
@@ -1064,6 +1082,61 @@ mod tests {
         editor.move_vertical(50);
         assert_eq!(at(&editor), (1, 2));
         assert_eq!(editor.cursor().line(), 1);
+    }
+
+    #[test]
+    fn shift_down_selects_whole_rows_and_shift_up_shrinks_them() {
+        let mut editor = editor("uno\ndos\ntres");
+        editor.set_cursor(0, 1);
+        editor.apply(Action::SelectDown);
+        // The anchor stays at 0:1 and the head follows the cursor, as in a drag.
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "no\nd");
+        editor.apply(Action::SelectDown);
+        assert_eq!(
+            editor.selection().unwrap().text(editor.buffer()),
+            "no\ndos\nt"
+        );
+        editor.apply(Action::SelectUp);
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "no\nd");
+        assert_eq!(at(&editor), (1, 1));
+    }
+
+    #[test]
+    fn shift_up_selects_backwards_from_the_cursor() {
+        let mut editor = editor("uno\ndos\ntres");
+        editor.set_cursor(2, 2);
+        editor.apply(Action::SelectUp);
+        assert_eq!(at(&editor), (1, 2));
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "s\ntr");
+    }
+
+    #[test]
+    fn shift_vertical_keeps_the_wanted_column_across_a_short_line() {
+        let mut editor = editor("0123456789\nxyz\n0123456789");
+        editor.set_cursor(0, 8);
+        editor.apply(Action::SelectDown);
+        assert_eq!(at(&editor), (1, 3));
+        editor.apply(Action::SelectDown);
+        assert_eq!(
+            at(&editor),
+            (2, 8),
+            "the goal column survives the short row"
+        );
+        assert_eq!(
+            editor.selection().unwrap().text(editor.buffer()),
+            "89\nxyz\n01234567"
+        );
+    }
+
+    #[test]
+    fn shift_vertical_extends_a_rectangular_mark() {
+        let mut editor = editor("abc\ndef\nghi");
+        editor.apply(Action::ToggleBlockSelection);
+        editor.set_cursor(0, 0);
+        editor.apply(Action::SelectDown);
+        editor.apply(Action::SelectDown);
+        editor.apply(Action::MoveRight);
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "a\nd\ng");
     }
 
     #[test]

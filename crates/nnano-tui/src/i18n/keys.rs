@@ -204,6 +204,20 @@ pub const KEYS: &[Entry] = &[
         "سطر لأسفل", "Une ligne en bas", "এক লাইন নিচে", "Uma linha abaixo",
         "Satu baris ke bawah", "1 行下",
     ]),
+    entry!("Extend the mark one line up" => [
+        "Extend the mark one line up", "向上扩展选区一行",
+        "चिह्न एक पंक्ति ऊपर बढ़ाएँ", "Extender la marca una línea arriba",
+        "توسيع التحديد سطرًا لأعلى", "Étendre la marque d'une ligne vers le haut",
+        "মার্ক এক লাইন উপরে বাড়ান", "Estender a marca uma linha acima",
+        "Perluas tanda satu baris ke atas", "選択範囲を 1 行上へ拡張",
+    ]),
+    entry!("Extend the mark one line down" => [
+        "Extend the mark one line down", "向下扩展选区一行",
+        "चिह्न एक पंक्ति नीचे बढ़ाएँ", "Extender la marca una línea abajo",
+        "توسيع التحديد سطرًا لأسفل", "Étendre la marque d'une ligne vers le bas",
+        "মার্ক এক লাইন নিচে বাড়ান", "Estender a marca uma linha abaixo",
+        "Perluas tanda satu baris ke bawah", "選択範囲を 1 行下へ拡張",
+    ]),
     entry!("Start of line" => [
         "Start of line", "行首", "पंक्ति का आरंभ", "Inicio de línea",
         "بداية السطر", "Début de ligne", "লাইনের শুরু", "Início da linha",
@@ -374,6 +388,17 @@ pub const KEYS: &[Entry] = &[
         "Desplazar la vista", "تمرير العرض", "Défiler la vue",
         "ভিউ স্ক্রল করুন", "Rolar a visão", "Gulir tampilan",
         "表示をスクロール",
+    ]),
+    entry!("Click bar" => [
+        "Click bar", "点击滚动条", "स्क्रॉलबार पर क्लिक",
+        "Clic en la barra", "النقر على شريط التمرير", "Clic sur la barre",
+        "বারে ক্লিক", "Clique na barra", "Klik bilah", "バーをクリック",
+    ]),
+    entry!("Jump to that page" => [
+        "Jump to that page", "跳到该位置", "उस स्थान पर जाएँ",
+        "Saltar a esa zona", "الانتقال إلى ذلك الموضع", "Aller à cet endroit",
+        "সেই জায়গায় যান", "Ir para essa posição", "Lompat ke posisi itu",
+        "その位置へ移動",
     ]),
     // Command palette
     entry!("Save file" => [

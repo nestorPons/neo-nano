@@ -48,9 +48,12 @@ La colonne *Alternative* donne le raccourci hérité de nano, lorsqu'il existe.
 | Première ligne | `Alt+\` | `Alt+\` |
 | Dernière ligne | `Alt+/` | `Alt+/` |
 | Un mot à gauche / à droite | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
+| Étendre la sélection vers le haut / le bas | `Shift+↑` / `Shift+↓` | — |
 | Une page en haut | `PgUp` | `Alt+↑` |
 | Une page en bas | `PgDn` | `Alt+↓` |
 | Un caractère en arrière | `Ctrl+B` | `Ctrl+B` |
+
+`Shift+↑`/`Shift+↓` commencent une marque au curseur et l'étendent par lignes entières en conservant la colonne visuelle ; `Esc` la retire. Une fois la marque posée, tout déplacement l'étend, comme dans nano.
 
 ## Recherche
 
@@ -106,7 +109,8 @@ Inchangés : `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B
 - `Ctrl+B` est le préfixe par défaut de tmux ; `Ctrl+A`, celui de screen.
 - `Ctrl+Shift+<lettre>` n'est pas fiable sur les terminaux anciens : il n'y a pas de `Ctrl+Shift+Z` pour rétablir.
 - Pour sélectionner du texte avec le terminal, maintenez `Shift` en glissant.
-- nnano utilise la souris quand l'option `mouse` est active (par défaut) : un clic place le curseur, un glissement marque, `Alt`+glissement marque un rectangle, et la molette défile sans déplacer le curseur.
+- nnano utilise la souris quand l'option `mouse` est active (par défaut) : un clic place le curseur, un glissement marque, `Alt`+glissement marque un rectangle, la molette défile sans déplacer le curseur, et un clic sur la barre de défilement à droite saute à cette partie du fichier.
+- La barre d'état affiche `ligne:colonne/total` : la ligne du curseur, sa colonne visuelle et le nombre total de lignes du document.
 - Groupes d'annulation : la frappe est groupée par mot et par une pause de 400 ms ; couper, coller, enregistrer et changer de tampon ferment le groupe. « Tout remplacer » est une seule étape.
 - `Ctrl+H` ouvre la référence des raccourcis. Retour arrière est la touche `Backspace` du terminal (`0x7F`) : si votre terminal envoie `0x08`, cette touche ouvre l'aide — configurez-le pour envoyer `0x7F`.
 

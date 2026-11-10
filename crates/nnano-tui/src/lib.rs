@@ -287,7 +287,7 @@ impl App {
             if self.redraw {
                 let size = session.terminal().size()?;
                 self.screen = (size.width, size.height);
-                let (_, body, _) = ui::areas(self.screen_rect(), self.buffer_count());
+                let (_, body, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
                 self.body_height = body.height;
                 if self.follow_cursor {
                     ui::ensure_cursor_visible(&mut self, body.width, body.height);
@@ -332,6 +332,14 @@ impl App {
         self.follow_cursor = !matches!(action, Action::ScrollView(_));
 
         if self.overlay.is_some() {
+            // Shift+↑/↓ extend a mark in the text, but a panel has no mark: there
+            // they move the highlighted row like the plain arrows, so the
+            // existing navigation does not regress.
+            let action = match action {
+                Action::SelectUp => Action::MoveUp,
+                Action::SelectDown => Action::MoveDown,
+                other => other,
+            };
             self.apply_overlay(action, confirming_quit);
             // An overlay can still edit the buffer (replace), so the snapshot
             // clock is re-armed here too, not only on the editor path.
@@ -1266,6 +1274,25 @@ impl App {
         self.viewport_mut().top_line = top.min(last);
     }
 
+    /// Click on the scrollbar: the clicked cell becomes the top of the view,
+    /// clamped to the last page. It goes through `ScrollView`, so the mouse keeps
+    /// the single-mutation-path rule and the cursor does not move.
+    fn scroll_to_bar(&mut self, row: u16, height: u16) {
+        let total = self.editor().buffer().line_count();
+        let visible = usize::from(height);
+        if visible == 0 || total <= visible {
+            return;
+        }
+        let max_top = total - visible;
+        let target = if visible <= 1 {
+            0
+        } else {
+            usize::from(row) * max_top / (visible - 1)
+        };
+        let current = self.viewport().top_line;
+        self.apply(Action::ScrollView(target as isize - current as isize));
+    }
+
     /// The prompt was accepted: compile once and jump to the first hit.
     fn accept_find(&mut self, prompt: &Prompt) {
         self.find.query = prompt.text().to_string();
@@ -1479,14 +1506,15 @@ impl App {
         text
     }
 
-    /// Right of the status bar: `line:column  file`, one-based and visual, as
-    /// nano prints it.
+    /// Right of the status bar: `line:column/total  file`, one-based and visual,
+    /// as nano prints the position plus the line count of the whole document.
     fn status_right(&self) -> String {
         let (line, col) = self
             .editor()
             .cursor()
             .display_position(self.editor().buffer(), self.tab_width());
-        format!("{line}:{col}  {} ", self.file_name())
+        let total = self.editor().buffer().line_count();
+        format!("{line}:{col}/{total}  {} ", self.file_name())
     }
 
     /// Mouse: click places the cursor, drag marks, wheel scrolls. Alt+drag is a
@@ -1510,6 +1538,14 @@ impl App {
             return;
         }
         let body = self.body_rect();
+        let bar = self.scrollbar_rect();
+        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+            && bar.width > 0
+            && self.hits(event.column, event.row, bar)
+        {
+            self.scroll_to_bar(event.row.saturating_sub(bar.y), bar.height);
+            return;
+        }
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let Some((line, col)) = self.hit_test(event.column, event.row, body) else {
@@ -1620,8 +1656,15 @@ impl App {
     }
 
     fn body_rect(&self) -> ratatui::layout::Rect {
-        let (_, body, _) = ui::areas(self.screen_rect(), self.buffer_count());
+        let (_, body, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
         body
+    }
+
+    /// The one-column scrollbar on the right edge; width zero when the screen is
+    /// too narrow to spare a column.
+    fn scrollbar_rect(&self) -> ratatui::layout::Rect {
+        let (_, _, bar, _) = ui::areas(self.screen_rect(), self.buffer_count());
+        bar
     }
 
     /// Cells in the text area: the wrap width `^J` uses. Zero before the first
@@ -1631,7 +1674,7 @@ impl App {
     }
 
     fn tabs_rect(&self) -> Option<ratatui::layout::Rect> {
-        let (tabs, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
+        let (tabs, _, _, _) = ui::areas(self.screen_rect(), self.buffer_count());
         tabs
     }
 }
@@ -1745,6 +1788,28 @@ mod tests {
     }
 
     #[test]
+    fn clicking_the_scrollbar_scrolls_without_moving_the_cursor() {
+        let text = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        app.screen = (80, 24);
+        let bar = app.scrollbar_rect();
+        assert_eq!(bar.width, 1, "the bar owns the right edge");
+        let before = (app.editor().cursor().line(), app.editor().cursor().col());
+        // The last cell of the bar maps to the last page.
+        app.on_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            bar.x,
+            bar.y + bar.height - 1,
+        ));
+        assert!(app.viewport().top_line > 0);
+        assert_eq!(
+            (app.editor().cursor().line(), app.editor().cursor().col()),
+            before,
+            "the wheel and the bar scroll the view, not the cursor"
+        );
+    }
+
+    #[test]
     fn a_click_outside_the_text_area_is_ignored() {
         let mut app = App::from_text("s.txt", "uno\n");
         app.screen = (20, 5);
@@ -1821,6 +1886,19 @@ mod tests {
             panic!("settings should still be open");
         };
         assert_eq!(settings.selected(), target);
+    }
+
+    #[test]
+    fn shift_arrows_move_the_highlight_instead_of_marking_a_panel() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.apply(Action::OpenSettings);
+        app.apply(Action::SelectDown);
+        let Some(super::Overlay::Settings(settings)) = app.overlay() else {
+            panic!("settings should still be open");
+        };
+        assert_eq!(settings.selected(), 1, "a panel row moves, it has no mark");
+        // The buffer was not touched: no mark leaked out of the overlay.
+        assert!(!app.editor().has_selection());
     }
 
     #[test]

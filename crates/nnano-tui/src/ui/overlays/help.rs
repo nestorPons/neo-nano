@@ -33,6 +33,7 @@ const NOTES: &[(&str, &[(&str, &str)])] = &[
             ("Click / drag", "Place the cursor / start the mark"),
             ("Alt+drag", "Rectangular mark"),
             ("Wheel", "Scroll the view"),
+            ("Click bar", "Jump to that page"),
         ],
     ),
 ];

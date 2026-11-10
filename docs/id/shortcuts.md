@@ -48,9 +48,12 @@ Kolom *Alternatif* adalah pintasan warisan nano, bila ada.
 | Baris pertama | `Alt+\` | `Alt+\` |
 | Baris terakhir | `Alt+/` | `Alt+/` |
 | Satu kata ke kiri / kanan | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
+| Perluas pilihan ke atas / bawah | `Shift+↑` / `Shift+↓` | — |
 | Satu halaman ke atas | `PgUp` | `Alt+↑` |
 | Satu halaman ke bawah | `PgDn` | `Alt+↓` |
 | Satu karakter mundur | `Ctrl+B` | `Ctrl+B` |
+
+`Shift+↑`/`Shift+↓` memulai tanda di kursor dan memperluasnya per baris sambil mempertahankan kolom visual; `Esc` menghapusnya. Saat tanda aktif, setiap gerakan memperluasnya, seperti di nano.
 
 ## Pencarian
 
@@ -106,7 +109,8 @@ Tidak berubah: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+B` adalah awalan bawaan tmux; `Ctrl+A`, milik screen.
 - `Ctrl+Shift+<huruf>` tidak andal di terminal lama: tidak ada `Ctrl+Shift+Z` untuk mengulangi.
 - Untuk memilih teks dengan terminal, tahan `Shift` saat menyeret.
-- nnano memakai mouse bila opsi `mouse` aktif (bawaan): klik meletakkan kursor, seret menandai, `Alt`+seret menandai persegi, dan roda menggulir tanpa memindahkan kursor.
+- nnano memakai mouse bila opsi `mouse` aktif (bawaan): klik meletakkan kursor, seret menandai, `Alt`+seret menandai persegi, roda menggulir tanpa memindahkan kursor, dan mengklik bilah gulir di kanan melompat ke bagian berkas itu.
+- Bilah status menampilkan `baris:kolom/total`: baris kursor, kolom visualnya, dan jumlah total baris dokumen.
 - Grup urungkan: pengetikan dikelompokkan per kata dan per jeda 400 ms; potong, tempel, simpan, dan pindah buffer menutup grup. "Ganti semua" adalah satu langkah.
 - `Ctrl+H` membuka referensi pintasan. Backspace adalah tombol Backspace terminal (`0x7F`): bila terminal Anda mengirim `0x08`, tombol itu membuka bantuan — atur agar mengirim `0x7F`.
 

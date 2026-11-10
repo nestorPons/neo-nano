@@ -2,6 +2,14 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `Shift+↑` / `Shift+↓` extend the mark by whole lines, editor-style: the first press starts the mark at the cursor, later presses grow the selection and keep the wanted visual column. Inside a panel the same keys move the highlighted row.
+- A one-column scrollbar on the right edge of the text area, with a proportional thumb; clicking it jumps to that part of the file without moving the cursor. The column is reserved, so the text width does not change when a file grows past the screen.
+- The status bar now shows `line:column/total`, adding the document's line count to the cursor position.
+
 ## [0.1.1] — 2026-11-09
 
 ### Added

@@ -22,10 +22,15 @@ use ratatui::widgets::Paragraph;
 use crate::App;
 use crate::ui::overlays::Overlay;
 
-/// The screen split: an optional one-row buffer bar, the text area and the status
-/// row. Shared by the renderer and the mouse hit test so clicks land where things
-/// are drawn.
-pub fn areas(area: Rect, buffers: usize) -> (Option<Rect>, Rect, Rect) {
+/// The screen split: an optional one-row buffer bar, the text area, the
+/// one-column scrollbar and the status row. Shared by the renderer and the mouse
+/// hit test so clicks land where things are drawn.
+///
+/// The scrollbar column is reserved even when the file fits, so the text width
+/// never changes when a buffer grows past the screen. A width under two cells is
+/// too narrow to give up a column: the text keeps everything and the bar has
+/// width zero.
+pub fn areas(area: Rect, buffers: usize) -> (Option<Rect>, Rect, Rect, Rect) {
     let tab_rows = u16::from(buffers > 1);
     let [tabs, body, status] = Layout::vertical([
         Constraint::Length(tab_rows),
@@ -33,7 +38,20 @@ pub fn areas(area: Rect, buffers: usize) -> (Option<Rect>, Rect, Rect) {
         Constraint::Length(1),
     ])
     .areas(area);
-    (if tab_rows > 0 { Some(tabs) } else { None }, body, status)
+    let (text, bar) = if body.width < 2 {
+        (body, Rect::new(body.x + body.width, body.y, 0, body.height))
+    } else {
+        (
+            Rect::new(body.x, body.y, body.width - 1, body.height),
+            Rect::new(body.x + body.width - 1, body.y, 1, body.height),
+        )
+    };
+    (
+        if tab_rows > 0 { Some(tabs) } else { None },
+        text,
+        bar,
+        status,
+    )
 }
 
 /// X offset and width of each buffer in the one-row bar, starting at column 1.
@@ -51,12 +69,13 @@ pub(crate) fn tab_layout(names: &[String]) -> Vec<(u16, u16)> {
 /// Draw a whole frame: buffer bar (when several buffers are open), text area,
 /// one-row status bar, plus whatever overlay currently owns the keys.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let (tabs, body, status) = areas(frame.area(), app.buffer_count());
+    let (tabs, body, bar, status) = areas(frame.area(), app.buffer_count());
     if let Some(tabs) = tabs {
         draw_tabs(frame, tabs, app);
     }
     let overlay = app.overlay();
     draw_body(frame, body, app, overlay.is_none());
+    draw_scrollbar(frame, bar, app);
 
     let lang = app.lang();
     match overlay {
@@ -154,6 +173,40 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, show_cursor: bool) {
         && let (Ok(x), Ok(y)) = (u16::try_from(col), u16::try_from(row))
     {
         frame.set_cursor_position((area.x + x, area.y + y));
+    }
+}
+
+/// The thin bar on the right edge of the text area. It mirrors the viewport and
+/// disappears when every line fits, so a short file keeps a clean edge.
+fn draw_scrollbar(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let total = app.editor().buffer().line_count();
+    let visible = usize::from(area.height);
+    if total <= visible {
+        return;
+    }
+    let max_top = total - visible;
+    let top = app.viewport().top_line.min(max_top);
+    // Proportional thumb, at least one cell, mapped into the travel left over.
+    let thumb = ((visible * visible) / total).clamp(1, visible);
+    let travel = visible - thumb;
+    let offset = if travel == 0 {
+        0
+    } else {
+        top * travel / max_top
+    };
+
+    let buffer = frame.buffer_mut();
+    for row in 0..area.height {
+        let index = usize::from(row);
+        let (symbol, style) = if (offset..offset + thumb).contains(&index) {
+            ("█", Style::default())
+        } else {
+            ("│", Style::default().add_modifier(Modifier::DIM))
+        };
+        buffer.set_string(area.x, area.y + row, symbol, style);
     }
 }
 
@@ -335,7 +388,7 @@ mod tests {
         let status = row(&terminal, HEIGHT - 1);
         assert!(status.contains("nnano"), "{status:?}");
         assert!(status.contains("notes.txt"), "{status:?}");
-        assert!(status.contains("1:1"), "{status:?}");
+        assert!(status.contains("1:1/3"), "{status:?}");
     }
 
     #[test]
@@ -363,7 +416,48 @@ mod tests {
         assert!(app.viewport().top_line > 0);
 
         let terminal = render(&app);
-        assert_eq!(row(&terminal, HEIGHT - 2), "line 79");
+        assert!(row(&terminal, HEIGHT - 2).starts_with("line 79"));
+    }
+
+    #[test]
+    fn the_scrollbar_tracks_the_viewport() {
+        let text = (0..80).map(|n| format!("line {n}\n")).collect::<String>();
+        let mut app = App::from_text("long.txt", &text);
+        let last = app.editor().buffer().line_count() - 1;
+        app.set_cursor(last, 0);
+        ensure_cursor_visible(&mut app, WIDTH - 1, HEIGHT - 1);
+        let terminal = render(&app);
+        let buffer = terminal.backend().buffer();
+        let x = WIDTH - 1;
+        assert_eq!(buffer[(x, 0)].symbol(), "│", "top of the view is track");
+        assert_eq!(
+            buffer[(x, HEIGHT - 2)].symbol(),
+            "█",
+            "the thumb sits on the last page"
+        );
+        assert_ne!(
+            buffer[(x, HEIGHT - 1)].symbol(),
+            "█",
+            "the status row is not the bar"
+        );
+    }
+
+    #[test]
+    fn a_short_file_leaves_the_scrollbar_column_empty() {
+        let app = App::from_text("s.txt", "uno\ndos\n");
+        let terminal = render(&app);
+        let buffer = terminal.backend().buffer();
+        for y in 0..HEIGHT - 1 {
+            assert_eq!(buffer[(WIDTH - 1, y)].symbol(), " ", "row {y}");
+        }
+    }
+
+    #[test]
+    fn a_one_column_screen_keeps_the_text_and_skips_the_bar() {
+        let app = App::from_text("s.txt", "a\\nb\\nc\\nd\\ne\\nf\\n");
+        let terminal = render_sized(&app, 1, HEIGHT);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "a", "no room to spare a column");
     }
 
     #[test]
@@ -377,7 +471,7 @@ mod tests {
 
         let narrow = status_text(&app, 20);
         assert_eq!(narrow.chars().count(), 20);
-        assert!(narrow.contains("1:2"), "{narrow:?}");
+        assert!(narrow.contains("1:2/1"), "{narrow:?}");
         assert_eq!(status_text(&app, 0), "");
     }
 
@@ -425,6 +519,32 @@ mod tests {
         let terminal = render(&app);
         let modifier = terminal.backend().buffer()[(0, 0)].modifier;
         assert!(modifier.contains(ratatui::style::Modifier::REVERSED));
+    }
+
+    #[test]
+    fn shift_down_marks_whole_rows_in_reverse_video() {
+        let mut app = App::from_text("notes.txt", "uno\ndos\ntres\n");
+        app.set_cursor(0, 0);
+        app.apply(Action::SelectDown);
+        app.apply(Action::SelectDown);
+        let terminal = render(&app);
+        let buffer = terminal.backend().buffer();
+        for y in 0..2 {
+            for x in 0..3 {
+                assert!(
+                    buffer[(x, y)]
+                        .modifier
+                        .contains(ratatui::style::Modifier::REVERSED),
+                    "cell {x},{y} should be marked"
+                );
+            }
+        }
+        assert!(
+            !buffer[(0, 2)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "the third row is outside the mark"
+        );
     }
 
     #[test]

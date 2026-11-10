@@ -48,9 +48,12 @@ The *Alternative* column is the inherited nano binding, where one exists.
 | First line | `Alt+\` | `Alt+\` |
 | Last line | `Alt+/` | `Alt+/` |
 | Word left / right | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
+| Extend selection up / down | `Shift+↑` / `Shift+↓` | — |
 | Page up | `PgUp` | `Alt+↑` |
 | Page down | `PgDn` | `Alt+↓` |
 | Back one character | `Ctrl+B` | `Ctrl+B` |
+
+`Shift+↑`/`Shift+↓` start a mark at the cursor and extend it by whole lines, keeping the visual column; `Esc` clears it. Once a mark exists, any movement extends it, as in nano.
 
 ## Search
 
@@ -106,7 +109,8 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - `Ctrl+B` is tmux's default prefix; `Ctrl+A` is screen's.
 - `Ctrl+Shift+<letter>` is unreliable on legacy terminals: there is no `Ctrl+Shift+Z` redo.
 - To select text with the terminal natively, hold `Shift` while dragging.
-- nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, and the wheel scrolls without moving the cursor.
+- nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file.
+- The status bar shows `line:column/total`: the cursor line, its visual column and the document's total line count.
 - Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. "Replace all" is one undo step.
 - `Ctrl+H` opens the shortcut reference. Backspace is the terminal's Backspace key (`0x7F`): if your terminal sends `0x08` for Backspace, that key opens help — set it to send `0x7F`.
 

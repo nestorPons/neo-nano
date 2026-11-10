@@ -48,9 +48,12 @@ A coluna *Alternativa* é o atalho herdado do nano, quando existe.
 | Primeira linha | `Alt+\` | `Alt+\` |
 | Última linha | `Alt+/` | `Alt+/` |
 | Uma palavra à esquerda / direita | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
+| Estender a seleção acima / abaixo | `Shift+↑` / `Shift+↓` | — |
 | Uma página acima | `PgUp` | `Alt+↑` |
 | Uma página abaixo | `PgDn` | `Alt+↓` |
 | Um caractere atrás | `Ctrl+B` | `Ctrl+B` |
+
+`Shift+↑`/`Shift+↓` iniciam a marca no cursor e a estendem por linhas inteiras, mantendo a coluna visual; `Esc` limpa a marca. Com uma marca ativa, qualquer movimento a estende, como no nano.
 
 ## Busca
 
@@ -106,7 +109,8 @@ Sem mudanças: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+B` é o prefixo padrão do tmux; `Ctrl+A`, do screen.
 - `Ctrl+Shift+<letra>` não é confiável em terminais antigos: não existe `Ctrl+Shift+Z` para refazer.
 - Para selecionar texto com o terminal, segure `Shift` ao arrastar.
-- O nnano usa o mouse quando a opção `mouse` está ligada (o padrão): clique posiciona o cursor, arrastar marca, `Alt`+arrastar marca um retângulo e a roda rola sem mover o cursor.
+- O nnano usa o mouse quando a opção `mouse` está ligada (o padrão): clique posiciona o cursor, arrastar marca, `Alt`+arrastar marca um retângulo, a roda rola sem mover o cursor e clicar na barra à direita salta para essa parte do arquivo.
+- A barra de status mostra `linha:coluna/total`: a linha do cursor, sua coluna visual e o total de linhas do documento.
 - Grupos de desfazer: a digitação é agrupada por palavra e por uma pausa de 400 ms; cortar, colar, salvar e trocar de buffer fecham o grupo. "Substituir tudo" é um único passo.
 - `Ctrl+H` abre a referência de atalhos. Backspace é a tecla Backspace do terminal (`0x7F`): se o seu terminal envia `0x08`, essa tecla abre a ajuda — configure-o para enviar `0x7F`.
 
