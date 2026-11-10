@@ -14,6 +14,7 @@ A modern terminal text editor that keeps nano's ethos — **simple, fast, easy, 
 - **Zero config**: `nnano file.txt` opens and edits. Nothing mandatory to set up.
 - **Desktop-first keymap**: `Ctrl+S` saves, `Ctrl+Q` quits, `Ctrl+O` opens. Non-colliding nano bindings stay (`Ctrl+K` cut line, `Ctrl+U` paste).
 - **Nano's soul**: in-place saves, `.nanorc` syntax grammars, search that wraps, literal by default.
+- **Syntax out of the box**: nano's `.nanorc` grammars are read when present, and built-in grammars cover html/htmx, js/ts/tsx/jsx/jx, php/phtml, go, css/scss, json, xml, yaml, toml, sql, markdown, shell, python, rust, c/c++ and java — no nano install required.
 - **Modern parts**: rope-backed buffers, grouped undo, mouse, rectangular selection, command palette, in-app settings, ten interface languages, recovery of unsaved work.
 
 One viewport, one cursor, no plugins, no LSP. That is the design, not a gap.

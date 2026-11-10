@@ -3,6 +3,11 @@
 //! - Definitions are nano's: `syntax <name> [file patterns]`, `color <fg,bg>
 //!   "regex"`, `icolor` for case-insensitive rules. No tree-sitter, no TextMate,
 //!   no plugin system.
+//! - Sources, highest precedence first: `~/.config/nnano/syntax`, then
+//!   `/usr/share/nnano/syntax`, then `/usr/share/nano` (nano's own set), then the
+//!   built-in grammars embedded in the binary. A user or distro file with the
+//!   same name wins, so the built-ins only fill the gaps — most visibly on a
+//!   system where nano is not installed at all.
 //! - A `syntax` block with no file patterns is the **fallback** grammar, as in
 //!   nano's `default.nanorc`; it is only used when nothing else matched.
 //! - Evaluation is **per line and stateless**: a rule never spans a line break, so
@@ -26,6 +31,12 @@ use regex_lite::{Regex, RegexBuilder};
 /// Longest line that gets highlighted, in chars. Beyond this a line is drawn
 /// plain: nano's per-line cost would otherwise be paid on a single huge line.
 pub const MAX_LINE: usize = 4096;
+
+/// The grammars that ship inside the binary, in nano's format. They cover the
+/// popular web and systems languages (html/htmx, js/ts/jsx/jx, php/phtml, go,
+/// css, json, xml, yaml, toml, sql, markdown, shell, python, rust, c, java) and
+/// are the lowest precedence layer: see [`SyntaxSet::load`].
+const POPULAR: &str = include_str!("../assets/syntax/popular.nanorc");
 
 /// Terminal palette colour, 8 normal plus 8 bright.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,10 +253,15 @@ impl SyntaxSet {
             .or_else(|| self.grammars.iter().find(|grammar| grammar.fallback))
     }
 
-    /// Read every `*.nanorc` in `dirs`, in order. Missing directories are normal
-    /// (most systems have none of the first two); unreadable ones warn. Grammar
-    /// content is third-party data and never produces warnings: a rule we cannot
-    /// use is skipped so a distro file cannot spam the terminal.
+    /// Read every `*.nanorc` in `dirs`, in order, then append the built-in
+    /// grammars. Missing directories are normal (most systems have none of the
+    /// first two); unreadable ones warn. Grammar content is third-party data and
+    /// never produces warnings: a rule we cannot use is skipped so a distro file
+    /// cannot spam the terminal.
+    ///
+    /// The built-ins go last on purpose: [`select`](Self::select) returns the
+    /// first match, so a user or distro grammar with the same patterns wins and
+    /// the embedded set only fills the gaps.
     pub fn load(dirs: &[PathBuf]) -> (Self, Vec<String>) {
         let mut set = Self::default();
         let mut warnings = Vec::new();
@@ -269,12 +285,15 @@ impl SyntaxSet {
             }
         }
 
+        set.grammars.extend(parse(POPULAR));
+
         (set, warnings)
     }
 }
 
 /// Grammar directories, highest precedence first: user, nnano's system dir, then
-/// the distro grammars nano ships (read-only, so we inherit its set).
+/// the distro grammars nano ships (read-only, so we inherit its set). The
+/// built-in grammars are appended by [`SyntaxSet::load`], after these.
 pub fn detect_dirs() -> Vec<PathBuf> {
     dirs_from_env(|name| std::env::var(name).ok())
 }
@@ -653,5 +672,110 @@ icolor cyan "todo"
     fn detect_dirs_always_has_the_system_fallbacks() {
         let dirs = detect_dirs();
         assert!(dirs.iter().any(|dir| dir.ends_with("nano")));
+    }
+
+    #[test]
+    fn every_builtin_grammar_and_rule_compiles() {
+        // `parse` drops what it cannot compile, so compare against the source
+        // counts: a typo in the asset cannot ship as silently missing colour.
+        let grammars = parse(super::POPULAR);
+        let syntax_lines = super::POPULAR
+            .lines()
+            .filter(|line| line.trim_start().starts_with("syntax "))
+            .count();
+        assert_eq!(grammars.len(), syntax_lines, "a syntax block was dropped");
+        let colour_lines = super::POPULAR
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                line.starts_with("color ") || line.starts_with("icolor ")
+            })
+            .count();
+        let rules: usize = grammars.iter().map(|grammar| grammar.rules.len()).sum();
+        assert_eq!(rules, colour_lines, "a rule did not compile");
+        for grammar in &grammars {
+            assert!(!grammar.rules.is_empty(), "{} has no rules", grammar.name);
+            assert!(
+                grammar.fallback || !grammar.file_patterns.is_empty(),
+                "{} lost its file patterns",
+                grammar.name
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_grammars_cover_the_popular_extensions() {
+        let set = SyntaxSet::from_grammars(parse(super::POPULAR));
+        for (file, expected) in [
+            ("index.html", "html"),
+            ("page.htm", "html"),
+            ("part.htmx", "htmx"),
+            ("app.vue", "html"),
+            ("app.js", "javascript"),
+            ("app.mjs", "javascript"),
+            ("app.cjs", "javascript"),
+            ("app.jx", "javascript"),
+            ("app.jsx", "javascript"),
+            ("app.ts", "javascript"),
+            ("app.tsx", "javascript"),
+            ("index.php", "php"),
+            ("view.phtml", "php"),
+            ("main.go", "go"),
+            ("style.scss", "css"),
+            ("data.json", "json"),
+            ("doc.svg", "xml"),
+            ("README.md", "markdown"),
+            ("run.sh", "sh"),
+            ("main.py", "python"),
+            ("main.rs", "rust"),
+            ("config.yml", "yaml"),
+            ("Cargo.toml", "toml"),
+            ("query.sql", "sql"),
+            ("main.cpp", "c"),
+            ("Main.java", "java"),
+            (".env", "dotenv"),
+            ("Dockerfile", "dockerfile"),
+            (".gitignore", "ignore"),
+        ] {
+            let grammar = set
+                .select(file)
+                .unwrap_or_else(|| panic!("no grammar for {file}"));
+            assert_eq!(grammar.name, expected, "{file}");
+        }
+    }
+
+    #[test]
+    fn htmx_attributes_get_their_own_colour() {
+        let set = SyntaxSet::from_grammars(parse(super::POPULAR));
+        let line = "<div hx-get=\"/x\" hx-target=\"#y\">";
+        let grammar = set.select("part.htmx").unwrap();
+        let spans = grammar.highlight(line, MAX_LINE);
+        let span = spans
+            .iter()
+            .find(|span| &line[span.start..span.end] == "hx-get")
+            .expect("hx-get should be highlighted");
+        assert_eq!(span.style.foreground, Some(Colour::BrightCyan));
+    }
+
+    #[test]
+    fn a_grammar_loaded_first_wins_over_the_builtin_one() {
+        // The user and distro layers are read before the embedded set, so the
+        // first match is the one already loaded.
+        let mut grammars = parse("syntax html \"\\.html$\"\ncolor red \"<\"\n");
+        grammars.extend(parse(super::POPULAR));
+        let set = SyntaxSet::from_grammars(grammars);
+        let span = set.select("index.html").unwrap().highlight("<p>", MAX_LINE)[0];
+        assert_eq!(span.style.foreground, Some(Colour::Red));
+    }
+
+    #[test]
+    fn load_appends_the_builtin_grammars_without_any_directory() {
+        let (set, warnings) =
+            SyntaxSet::load(&[std::path::PathBuf::from("/nonexistent/nnano/syntax")]);
+        assert!(warnings.is_empty());
+        assert!(
+            set.select("main.go").is_some(),
+            "a system without nano still highlights"
+        );
     }
 }

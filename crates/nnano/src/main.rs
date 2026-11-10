@@ -19,8 +19,9 @@ fn main() -> ExitCode {
         eprintln!("nnano: {warning}");
     }
 
-    // Distro grammars are inherited from nano (/usr/share/nano), so a system with
-    // nano installed highlights without any nnano setup.
+    // User and distro grammars are read first, then the built-in set the binary
+    // carries, so a system without nano installed still highlights the popular
+    // languages.
     let (syntax, syntax_warnings) =
         nnano_core::syntax::SyntaxSet::load(&nnano_core::syntax::detect_dirs());
     for warning in syntax_warnings {

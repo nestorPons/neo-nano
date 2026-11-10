@@ -1,0 +1,177 @@
+# Built-in grammars for nnano, in nano's nanorc format.
+#
+# They are the lowest layer: user grammars (~/.config/nnano/syntax), then
+# /usr/share/nnano/syntax and /usr/share/nano are loaded first, so a distro or
+# user file with the same name wins. These exist so nnano highlights the most
+# common languages even on a system without nano installed.
+#
+# Only single-line rules belong here: evaluation is per line and stateless, so
+# start=/end= rules would be dropped by the reader.
+
+# --- Web ---------------------------------------------------------------
+
+syntax html "\.(html?|vue|svelte|astro)$"
+color green "<!--.*-->"
+icolor yellow "\b[a-z-]+="
+color magenta "\"[^\"]*\"|'[^']*'"
+color cyan "<[^>]*>"
+color brightcyan "&[a-z0-9#]+;"
+
+syntax htmx "\.htmx$"
+color green "<!--.*-->"
+color brightcyan "\bhx-[a-z-]+"
+icolor yellow "\b[a-z-]+="
+color magenta "\"[^\"]*\"|'[^']*'"
+color cyan "<[^>]*>"
+color brightcyan "&[a-z0-9#]+;"
+
+syntax javascript "\.(m?js|cjs|jsx|ts|tsx|jx)$"
+color blue "//.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'|`[^`]*`"
+color yellow "\b(const|let|var|function|class|extends|new|return|if|else|for|while|do|switch|case|default|break|continue|try|catch|finally|throw|async|await|yield|import|export|from|of|in|typeof|instanceof|delete|void|this|super|static|get|set|interface|type|enum|implements|declare|readonly)\b"
+color brightblue "\b(true|false|null|undefined|NaN|Infinity)\b"
+color green "\b(console|document|window|Math|JSON|Object|Array|Promise|Map|Set|require|module|exports)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax php "\.(php[0-9]?|phtml|ctp)$"
+color blue "//.*$|#.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'"
+color brightred "<\?php|<\?=|\?>"
+color brightblue "\$[A-Za-z_][A-Za-z0-9_]*"
+color yellow "\b(function|class|public|private|protected|static|return|if|else|elseif|foreach|for|while|switch|case|break|continue|new|echo|print|require|include|namespace|use|extends|implements|interface|trait|try|catch|finally|throw|match|fn|declare|global|isset|unset|empty|array|list|readonly|enum)\b"
+color green "\b(true|false|null)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax css "\.(css|scss|sass|less)$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'"
+color yellow "[-a-zA-Z]+[[:space:]]*:"
+color brightblue "#[0-9a-fA-F]{3,8}\b"
+color brightwhite "\.[A-Za-z_-][A-Za-z0-9_-]*"
+color cyan "\b\d+(px|em|rem|%|vh|vw|vmin|vmax|s|ms|pt|fr|ch|ex)?\b"
+
+syntax json "\.(json|jsonc|json5)$"
+color blue "//.*$|/\*.*\*/"
+color yellow "\"[^\"]*\"[[:space:]]*:"
+color magenta "\"[^\"]*\""
+color brightblue "\b(true|false|null)\b"
+color cyan "\b\d+(\.\d+)?([eE][-+]?\d+)?\b"
+
+# --- Data and configuration --------------------------------------------
+
+syntax xml "\.(xml|svg|xhtml|xsl|xslt|rss|atom|plist|wsdl|xsd|kml|gpx|jsp)$"
+color green "<!--.*-->"
+icolor yellow "\b[a-zA-Z-]+="
+color magenta "\"[^\"]*\"|'[^']*'"
+color cyan "<[^>]*>"
+color brightcyan "&[a-z0-9#]+;"
+
+syntax yaml "\.ya?ml$"
+color blue "#.*$"
+color yellow "^[[:space:]]*-?[[:space:]]*[A-Za-z0-9_.-]+:"
+color magenta "\"[^\"]*\"|'[^']*'"
+color brightblue "\b(true|false|null|yes|no|on|off)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax toml "\.toml$"
+color blue "#.*$"
+color yellow "^[[:space:]]*\[[^]]*\]"
+color brightblue "[A-Za-z0-9_.-]+[[:space:]]*="
+color magenta "\"[^\"]*\"|'[^']*'"
+color cyan "\b(true|false)\b|\b\d+(\.\d+)?\b"
+
+syntax ini "\.(ini|cfg|conf|properties|editorconfig)$"
+color blue "[;#].*$"
+color yellow "^[[:space:]]*\[[^]]*\]"
+color brightblue "^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*="
+color magenta "\"[^\"]*\"|'[^']*'"
+
+syntax dotenv "(^|/)\.env(\.[A-Za-z0-9_-]+)?$"
+color blue "#.*$"
+color brightblue "^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="
+color magenta "\"[^\"]*\"|'[^']*'"
+
+syntax dockerfile "(^|/)(Dockerfile|Containerfile)(\..*)?$"
+color blue "#.*$"
+icolor yellow "^\s*(FROM|RUN|CMD|LABEL|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL)\b"
+color magenta "\"[^\"]*\"|'[^']*'"
+color brightblue "\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*"
+color cyan "--[a-z-]+"
+
+syntax ignore "(^|/)\.(gitignore|dockerignore|npmignore)$"
+color blue "^[[:space:]]*#.*$"
+color red "^!.*$"
+color green "^[^#![:space:]].*$"
+
+# --- Languages ---------------------------------------------------------
+
+syntax go "\.go$"
+color blue "//.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'|`[^`]*`"
+color yellow "\b(package|import|func|return|if|else|for|range|switch|case|default|break|continue|go|defer|select|chan|map|struct|interface|type|var|const|fallthrough|goto)\b"
+color brightblue "\b(nil|true|false|iota)\b"
+color green "\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|uintptr|float32|float64|complex64|complex128|string|bool|byte|rune|error|any)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax python "\.py[wi]?$"
+color blue "#.*$"
+color magenta "\"\"\".*\"\"\"|'''.*'''|\"[^\"]*\"|'[^']*'"
+color yellow "\b(def|class|return|if|elif|else|for|while|in|not|and|or|is|import|from|as|with|try|except|finally|raise|pass|break|continue|lambda|yield|global|nonlocal|assert|del|async|await|match|case)\b"
+color brightblue "\b(self|None|True|False)\b"
+color green "\b(print|len|range|int|str|float|list|dict|set|tuple|open|super|type|isinstance|enumerate|zip|map|filter|sorted)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax rust "\.rs$"
+color blue "//.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[a-z]'"
+color yellow "\b(fn|let|mut|const|static|struct|enum|trait|impl|for|while|loop|if|else|match|return|use|mod|pub|crate|super|self|Self|where|as|in|move|ref|dyn|async|await|unsafe|extern|type|break|continue)\b"
+color brightblue "\b(i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|bool|char|str|String|Vec|Option|Result|Box|Some|None|Ok|Err)\b"
+color green "\b[a-z_][a-z0-9_]*!\("
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax c "\.([ch]|cc|cpp|cxx|hpp|hxx|ino)$"
+color blue "//.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'"
+color yellow "\b(if|else|for|while|do|switch|case|default|break|continue|return|goto|struct|union|enum|typedef|static|extern|const|volatile|inline|sizeof|class|public|private|protected|virtual|override|new|delete|using|namespace|template|try|catch|throw|auto)\b"
+color brightblue "\b(void|int|char|short|long|float|double|signed|unsigned|bool|size_t|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t)\b"
+color green "^[[:space:]]*#[[:space:]]*[a-z]+"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax java "\.java$"
+color blue "//.*$"
+color blue "/\*.*\*/"
+color magenta "\"[^\"]*\"|'[^']*'"
+color yellow "\b(class|interface|enum|extends|implements|public|private|protected|static|final|abstract|void|return|if|else|for|while|do|switch|case|break|continue|new|package|import|try|catch|finally|throw|throws|this|super|instanceof|synchronized|volatile|transient|native|record|sealed|permits)\b"
+color brightblue "\b(int|long|short|byte|char|float|double|boolean|String|Object|Integer|Long|Double|Boolean|List|Map|Set)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax sql "\.sql$"
+icolor blue "--.*$"
+color blue "/\*.*\*/"
+color magenta "'[^']*'"
+icolor yellow "\b(select|from|where|insert|into|values|update|set|delete|create|table|alter|drop|index|join|left|right|inner|outer|on|group|by|order|having|limit|offset|union|distinct|as|and|or|not|null|is|in|exists|between|like|case|when|then|else|end|primary|key|foreign|references|default|unique|constraint|cascade)\b"
+icolor brightblue "\b(true|false)\b"
+color cyan "\b\d+(\.\d+)?\b"
+
+syntax markdown "\.(md|markdown|mdx)$"
+color brightblue "^#{1,6} .*$"
+color yellow "^[[:space:]]*[-*+] "
+color blue "^>.*$"
+color cyan "`[^`]*`"
+color magenta "\[[^]]*\]\([^)]*\)"
+color bold,yellow "\*\*[^*]*\*\*"
+color italic,cyan "\*[^*]*\*"
+color underline "https?://[^ ]+"
+
+syntax sh "\.(sh|bash|zsh|ksh|fish)$"
+color blue "#.*$"
+color magenta "\"[^\"]*\"|'[^']*'"
+color yellow "\b(if|then|else|elif|fi|for|while|until|do|done|case|esac|function|return|exit|local|export|readonly|declare|typeset|shift|break|continue|in|select|time)\b"
+color brightblue "\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*"
+color cyan "\$[0-9@*#?$!-]"
+color green "\b(echo|printf|read|cd|pwd|test|true|false|set|unset|alias|source|trap|wait|exec|eval)\b"

@@ -140,8 +140,10 @@ last edit and removed on save, on close and on a clean exit. Falls back to
 .IR ~/.local/state/nnano/recovery/ .
 .TP
 .I ~/.config/nnano/syntax/*.nanorc
-Extra syntax grammars, in nano's format. Distro grammars are inherited from
-.IR /usr/share/nnano/syntax " and " /usr/share/nano .
+Extra syntax grammars, in nano's format. Distro grammars are read from
+.IR /usr/share/nnano/syntax " and " /usr/share/nano ,
+and a built\-in set covering the popular languages is always available, so nano
+does not have to be installed.
 .SH ENVIRONMENT
 .TP
 .B XDG_CONFIG_HOME
