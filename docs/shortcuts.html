@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n>Keyboard shortcuts — neo-nano</title>
+  <meta name="description" data-i18n-attr="content" content="Full nnano key reference: file, editing, navigation, search, interface, the differences from nano and the terminal limits.">
+  <meta name="author" content="Nestor Pons">
+  <meta name="theme-color" content="#050806">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="translator.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content" data-i18n>Skip to content</a>
+
+  <div class="wrap topnav" aria-label="Main navigation" data-i18n-attr="aria-label">
+    <a class="brand" href="./">neo-nano</a>
+    <a href="index.html#what" data-i18n>what it is</a>
+    <a href="index.html#install" data-i18n>install</a>
+    <a href="shortcuts.html" aria-current="page" data-i18n>shortcuts</a>
+    <a href="index.html#project" data-i18n>project</a>
+    <div class="lang-wrap" data-lang-switch hidden>
+      <label class="sr-only" for="lang" data-i18n>Language</label>
+      <select id="lang" class="lang-select" aria-label="Language" data-i18n-attr="aria-label">
+        <option value="en" selected>English</option>
+        <option value="es">Español</option>
+        <option value="zh">简体中文</option>
+        <option value="hi">हिन्दी</option>
+        <option value="ar">العربية</option>
+        <option value="fr">Français</option>
+        <option value="bn">বাংলা</option>
+        <option value="pt">Português</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="ja">日本語</option>
+      </select>
+      <span class="lang-status" aria-live="polite"></span>
+    </div>
+    <a href="https://github.com/nestorPons/neo-nano">github ↗</a>
+  </div>
+
+  <main id="content" class="wrap">
+    <h1><span class="hash">#</span> <span data-i18n>Keyboard shortcuts</span></h1>
+    <p class="lead" data-i18n>nnano uses a <strong>desktop-first keymap</strong> by default. nano bindings that do not collide are kept.</p>
+    <p class="muted" data-i18n><strong>Notation:</strong> <code>Ctrl</code> = <code>^</code> · <code>Alt</code> = <code>M-</code>. On macOS, <code>Alt</code> is <code>Option</code>; <code>Cmd+*</code> never reaches the application. The <em>Alternative</em> column is the inherited nano binding, where one exists.</p>
+
+    <section id="file">
+      <h2 data-i18n>File</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Action</th><th scope="col" data-i18n>Key</th><th scope="col" data-i18n>Alternative</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n>Save</td><td><kbd>Ctrl+S</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Save as</td><td><kbd>Alt+S</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Open file</td><td><kbd>Ctrl+O</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Reload from disk</td><td><kbd>Ctrl+R</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Insert file at the cursor</td><td><kbd>Alt+I</kbd></td><td data-i18n><kbd>Ctrl+R</kbd> (nano)</td></tr>
+            <tr><td data-i18n>New buffer</td><td><kbd>Ctrl+N</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>New tab</td><td><kbd>Ctrl+T</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Close buffer</td><td><kbd>Ctrl+W</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Quit</td><td><kbd>Ctrl+Q</kbd></td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="editing">
+      <h2 data-i18n>Editing</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Action</th><th scope="col" data-i18n>Key</th><th scope="col" data-i18n>Alternative</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n>Undo</td><td><kbd>Ctrl+Z</kbd></td><td><kbd>Alt+U</kbd></td></tr>
+            <tr><td data-i18n>Redo</td><td><kbd>Ctrl+Y</kbd></td><td><kbd>Alt+E</kbd></td></tr>
+            <tr><td data-i18n>Cut</td><td><kbd>Ctrl+X</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Copy</td><td><kbd>Ctrl+C</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Paste</td><td><kbd>Ctrl+V</kbd></td><td><kbd>Ctrl+U</kbd></td></tr>
+            <tr><td data-i18n>Cut line</td><td><kbd>Ctrl+K</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Select all</td><td><kbd>Ctrl+A</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Start marking</td><td><kbd>Alt+A</kbd></td><td><kbd>Alt+A</kbd></td></tr>
+            <tr><td data-i18n>Copy marked text</td><td><kbd>Alt+6</kbd></td><td><kbd>Alt+6</kbd></td></tr>
+            <tr><td data-i18n>Rectangular mark</td><td><kbd>Alt+Z</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Delete character</td><td><kbd>Ctrl+D</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Replace</td><td><kbd>Ctrl+\</kbd></td><td><kbd>Alt+R</kbd></td></tr>
+            <tr><td data-i18n>Justify paragraph</td><td><kbd>Ctrl+J</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Execute external command</td><td><kbd>Alt+X</kbd></td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="navigation">
+      <h2 data-i18n>Navigation</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Action</th><th scope="col" data-i18n>Key</th><th scope="col" data-i18n>Alternative</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n>Go to line</td><td><kbd>Ctrl+G</kbd></td><td><kbd>Alt+G</kbd></td></tr>
+            <tr><td data-i18n>Start of line</td><td><kbd>Home</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>End of line</td><td><kbd>End</kbd></td><td><kbd>Ctrl+E</kbd></td></tr>
+            <tr><td data-i18n>First line</td><td><kbd>Alt+\</kbd></td><td><kbd>Alt+\</kbd></td></tr>
+            <tr><td data-i18n>Last line</td><td><kbd>Alt+/</kbd></td><td><kbd>Alt+/</kbd></td></tr>
+            <tr><td data-i18n>Word left / right</td><td><kbd>Ctrl+←</kbd> / <kbd>Ctrl+→</kbd></td><td><kbd>Alt+←</kbd> / <kbd>Alt+→</kbd></td></tr>
+            <tr><td data-i18n>Extend selection up / down</td><td><kbd>Shift+↑</kbd> / <kbd>Shift+↓</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Page up</td><td><kbd>PgUp</kbd></td><td><kbd>Alt+↑</kbd></td></tr>
+            <tr><td data-i18n>Page down</td><td><kbd>PgDn</kbd></td><td><kbd>Alt+↓</kbd></td></tr>
+            <tr><td data-i18n>Back one character</td><td><kbd>Ctrl+B</kbd></td><td><kbd>Ctrl+B</kbd></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" data-i18n><kbd>Shift+↑</kbd>/<kbd>Shift+↓</kbd> start a mark at the cursor and extend it by whole lines, keeping the visual column; <kbd>Esc</kbd> clears it. Once a mark exists, any movement extends it, as in nano.</p>
+    </section>
+
+    <section id="search">
+      <h2 data-i18n>Search</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Action</th><th scope="col" data-i18n>Key</th><th scope="col" data-i18n>Alternative</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n>Find</td><td><kbd>Ctrl+F</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Find next</td><td><kbd>F3</kbd></td><td><kbd>Alt+W</kbd></td></tr>
+            <tr><td data-i18n>Find previous</td><td><kbd>Shift+F3</kbd></td><td><kbd>Alt+B</kbd></td></tr>
+            <tr><td data-i18n>Case-sensitive toggle (in prompt)</td><td><kbd>Alt+C</kbd></td><td><kbd>Alt+C</kbd></td></tr>
+            <tr><td data-i18n>Regexp toggle (in prompt)</td><td><kbd>Alt+R</kbd></td><td><kbd>Alt+R</kbd></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" data-i18n>Search mirrors nano: it is <strong>not incremental</strong> (it runs when you accept the prompt), it is literal by default, case-insensitive by default, and it wraps around the buffer with a <em>Search wrapped</em> notice. <kbd>Alt+R</kbd> is modal: inside a prompt it toggles regexp, outside it opens Replace.</p>
+    </section>
+
+    <section id="interface">
+      <h2 data-i18n>Interface</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Action</th><th scope="col" data-i18n>Key</th><th scope="col" data-i18n>Alternative</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n>Help</td><td><kbd>Ctrl+H</kbd></td><td><kbd>F1</kbd></td></tr>
+            <tr><td data-i18n>Settings menu</td><td><kbd>Alt+,</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Command palette</td><td><kbd>Ctrl+P</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Toggle syntax highlighting</td><td><kbd>Alt+Y</kbd></td><td><kbd>Alt+Y</kbd></td></tr>
+            <tr><td data-i18n>Refresh screen</td><td><kbd>Ctrl+L</kbd></td><td><kbd>Ctrl+L</kbd></td></tr>
+            <tr><td data-i18n>Interface language</td><td data-i18n><kbd>Alt+,</kbd> → Language</td><td><code>--language &lt;code&gt;</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" data-i18n>The palette (<kbd>Ctrl+P</kbd>) prints the key that runs each command on the right, and typing a key (<code>ctrl+q</code>) filters by shortcut. The help (<kbd>Ctrl+H</kbd>) and the palette are generated from the same keymap table the decoder reads, so they never advertise a key that does not work.</p>
+      <p class="muted" data-i18n>The interface speaks ten languages: English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia and 日本語. Pick one in the settings overlay (<kbd>Alt+,</kbd> → Language) or with <code>--language es</code>; <code>language = "auto"</code> in <code>config.toml</code> follows <code>$LC_ALL</code>/<code>$LANG</code>.</p>
+    </section>
+
+    <section id="changes">
+      <h2 data-i18n>What changed from nano</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col" data-i18n>Before (nano)</th><th scope="col" data-i18n>Now</th></tr></thead>
+          <tbody>
+            <tr><td data-i18n><kbd>Ctrl+O</kbd> save</td><td data-i18n><kbd>Ctrl+S</kbd> save</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+X</kbd> exit</td><td data-i18n><kbd>Ctrl+Q</kbd> quit · <kbd>Ctrl+X</kbd> cuts</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+W</kbd> search</td><td data-i18n><kbd>Ctrl+F</kbd> search · <kbd>Ctrl+W</kbd> closes buffer</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+C</kbd> cursor position</td><td data-i18n>Status bar · <kbd>Ctrl+C</kbd> copies</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+V</kbd> page down</td><td data-i18n><kbd>PgDn</kbd> / <kbd>Alt+↓</kbd> · <kbd>Ctrl+V</kbd> pastes</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+Y</kbd> page up</td><td data-i18n><kbd>PgUp</kbd> / <kbd>Alt+↑</kbd> · <kbd>Ctrl+Y</kbd> redoes</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+A</kbd> start of line</td><td data-i18n><kbd>Home</kbd> · <kbd>Ctrl+A</kbd> selects all</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+Z</kbd> suspend</td><td data-i18n>Removed · <kbd>Ctrl+Z</kbd> undoes</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+R</kbd> insert file</td><td data-i18n><kbd>Alt+I</kbd> · <kbd>Ctrl+R</kbd> reloads</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+N</kbd> / <kbd>Ctrl+P</kbd> next / previous line</td><td data-i18n><kbd>↓</kbd> / <kbd>↑</kbd> arrows · new buffer / palette</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+T</kbd> execute</td><td data-i18n><kbd>Alt+X</kbd> · <kbd>Ctrl+T</kbd> opens a tab</td></tr>
+            <tr><td data-i18n><kbd>Ctrl+G</kbd> help</td><td data-i18n><kbd>F1</kbd> · <kbd>Ctrl+G</kbd> goes to line</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" data-i18n>Unchanged: <kbd>Ctrl+K</kbd>, <kbd>Ctrl+U</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+D</kbd>, <kbd>Ctrl+J</kbd>, <kbd>Ctrl+L</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+\</kbd>, <kbd>Alt+U</kbd>, <kbd>Alt+E</kbd>, <kbd>Alt+A</kbd>, <kbd>Alt+6</kbd>, <kbd>Alt+G</kbd>, <kbd>Alt+\</kbd>, <kbd>Alt+/</kbd>, <kbd>Alt+W</kbd>, <kbd>Alt+B</kbd>, <kbd>Alt+C</kbd>, <kbd>Alt+R</kbd>, <kbd>Alt+Y</kbd>.</p>
+    </section>
+
+    <section id="limits">
+      <h2 data-i18n>Terminal limits</h2>
+      <ul class="plain">
+        <li data-i18n><kbd>Ctrl+S</kbd> and <kbd>Ctrl+Q</kbd> require XON/XOFF flow control to be disabled; otherwise the terminal swallows them.</li>
+        <li data-i18n><kbd>Enter</kbd>, <kbd>Tab</kbd>, <kbd>Backspace</kbd> and <kbd>Esc</kbd> cannot be reassigned.</li>
+        <li data-i18n><kbd>Ctrl+B</kbd> is tmux's default prefix; <kbd>Ctrl+A</kbd> is screen's.</li>
+        <li data-i18n><kbd>Ctrl+Shift+&lt;letter&gt;</kbd> is unreliable on legacy terminals: there is no <kbd>Ctrl+Shift+Z</kbd> redo.</li>
+        <li data-i18n>To select text with the terminal natively, hold <kbd>Shift</kbd> while dragging.</li>
+        <li data-i18n>nnano uses the mouse when the <code>mouse</code> option is on (the default): click places the cursor, drag marks, <kbd>Alt</kbd>+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file.</li>
+        <li data-i18n>The status bar shows <code>line:column/total</code>: the cursor line, its visual column and the document's total line count.</li>
+        <li data-i18n>Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. “Replace all” is one undo step.</li>
+        <li data-i18n><kbd>Ctrl+H</kbd> opens the shortcut reference. Backspace is the terminal's Backspace key (<code>0x7F</code>): if your terminal sends <code>0x08</code> for Backspace, that key opens help — set it to send <code>0x7F</code>.</li>
+      </ul>
+    </section>
+
+    <section id="prompts">
+      <h2 data-i18n>Prompts and the recovery file</h2>
+      <ul class="plain">
+        <li data-i18n><kbd>Alt+S</kbd> asks for a path, and so does <kbd>Ctrl+S</kbd> on a buffer with no name (<code>nnano -</code>, a fresh buffer, or a save-as that was cancelled). <kbd>Tab</kbd> completes the path in <em>Save as</em>, <em>Open</em> and <em>Insert file</em>: a single match fills it, several extend it to the common prefix.</li>
+        <li data-i18n><kbd>Alt+S</kbd> writes a new file and adopts its name: the buffer bar, the status bar and the syntax grammar follow it. A failed write leaves the old name in place.</li>
+        <li data-i18n><kbd>Alt+X</kbd> runs the line with <code>sh -c</code> and inserts its stdout at the cursor as one undo step; the status bar reports the exit code and the first line of stderr.</li>
+        <li data-i18n><kbd>Ctrl+R</kbd> re-reads this buffer's file from disk and replaces the text; the undo history of the old text is dropped. With unsaved changes it asks once (<kbd>Ctrl+R</kbd> again reloads, <kbd>Ctrl+S</kbd> saves).</li>
+        <li data-i18n><kbd>Alt+I</kbd> asks for a file and inserts its text at the cursor as one undo step; <kbd>Tab</kbd> completes the path. The buffer keeps its own name and encoding.</li>
+        <li data-i18n>While a buffer has unsaved changes, nnano writes a recovery snapshot 2 s after the last edit under <code>$XDG_STATE_HOME/nnano/recovery/</code>. A crash or a killed SSH session is restored automatically on the next start (<code>recovered unsaved changes for …</code>); saving or a clean exit deletes it.</li>
+        <li data-i18n><kbd>Ctrl+C</kbd> and <kbd>Alt+6</kbd> always copy into the internal register. Enable the <code>osc52</code> option (<code>--osc52</code>) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar.</li>
+        <li data-i18n><kbd>Ctrl+J</kbd> re-wraps the paragraph around the cursor (or the marked lines) to the width of the text area, keeping the first line's indent. It is one undo step.</li>
+      </ul>
+    </section>
+
+    <section id="languages">
+      <h2 data-i18n>Reference in other languages</h2>
+      <p class="muted">
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/es/shortcuts.md">Español</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/zh-Hans/shortcuts.md">简体中文</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/ja/shortcuts.md">日本語</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/hi/shortcuts.md">हिन्दी</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/ar/shortcuts.md">العربية</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/fr/shortcuts.md">Français</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/bn/shortcuts.md">বাংলা</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/pt/shortcuts.md">Português</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/id/shortcuts.md">Bahasa Indonesia</a>
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p class="prompt" aria-hidden="true"><span class="user">nestor@neo-nano</span>:<span class="path">~</span>$ <span class="cmd">exit</span><span class="cursor"></span></p>
+      <p>© 2026 Nestor Pons · MIT · <a href="./" data-i18n>back to the start</a></p>
+    </div>
+  </footer>
+</body>
+</html>

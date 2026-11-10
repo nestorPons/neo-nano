@@ -84,18 +84,19 @@ a:focus-visible {
 }
 
 .skip {
-  position: absolute;
-  left: -999px;
+  position: fixed;
+  inset-inline-start: 8px;
   top: 8px;
   z-index: 200;
   padding: 8px 12px;
   background: var(--panel);
   border: 1px solid var(--green);
   border-radius: var(--radius);
+  transform: translateY(-250%);
 }
 
 .skip:focus {
-  left: 8px;
+  transform: none;
 }
 
 .sr-only {
@@ -197,7 +198,7 @@ code {
   display: inline-block;
   width: 0.6ch;
   height: 1.05em;
-  margin-left: 2px;
+  margin-inline-start: 2px;
   background: var(--green);
   vertical-align: -0.15em;
   animation: blink 1.05s steps(1) infinite;
@@ -327,7 +328,7 @@ p {
 
 .card .ico {
   color: var(--green);
-  margin-right: 0.4rem;
+  margin-inline-end: 0.4rem;
 }
 
 /* --- Captura ------------------------------------------------------- */
@@ -380,7 +381,7 @@ p {
 .copy {
   position: absolute;
   top: 0.5rem;
-  right: 0.5rem;
+  inset-inline-end: 0.5rem;
   padding: 0.2rem 0.55rem;
   background: var(--panel-2);
   color: var(--dim);
@@ -417,7 +418,7 @@ table {
 }
 
 caption {
-  text-align: left;
+  text-align: start;
   padding: 0.65rem 0.85rem;
   color: var(--dim);
   font-size: 0.8rem;
@@ -426,7 +427,7 @@ caption {
 
 th,
 td {
-  text-align: left;
+  text-align: start;
   padding: 0.55rem 0.85rem;
   border-bottom: 1px solid var(--border-soft);
   vertical-align: top;
@@ -471,7 +472,7 @@ ul.plain {
 
 ul.plain li {
   position: relative;
-  padding-left: 1.4rem;
+  padding-inline-start: 1.4rem;
   margin-block: 0.45rem;
   max-width: 72ch;
 }
@@ -479,7 +480,7 @@ ul.plain li {
 ul.plain li::before {
   content: "›";
   position: absolute;
-  left: 0.2rem;
+  inset-inline-start: 0.2rem;
   color: var(--green);
 }
 
@@ -579,7 +580,7 @@ footer .prompt {
   font-weight: 700;
   letter-spacing: 0.04em;
   border-bottom: 0;
-  margin-right: auto;
+  margin-inline-end: auto;
 }
 
 .topnav .brand::before {
@@ -657,4 +658,72 @@ h1 .hash {
     box-shadow: none;
     border-color: #999;
   }
+}
+
+/* --- Selector de idioma (Translator API) --------------------------- */
+
+.lang-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.lang-wrap[hidden] {
+  display: none;
+}
+
+.lang-select {
+  appearance: none;
+  background-color: #0b160e;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235f8f6e' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--green-soft);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 1.55rem 0.25rem 0.55rem;
+  cursor: pointer;
+}
+
+.lang-select:hover {
+  border-color: var(--green);
+}
+
+.lang-select:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lang-status {
+  color: var(--dim);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+/* --- Árabe: la terminal se queda LTR, el texto no ------------------- */
+
+[dir="rtl"] .prompt,
+[dir="rtl"] .logo,
+[dir="rtl"] .term-title,
+[dir="rtl"] pre,
+[dir="rtl"] code,
+[dir="rtl"] kbd {
+  direction: ltr;
+}
+
+[dir="rtl"] .prompt,
+[dir="rtl"] .logo {
+  text-align: left;
+}
+
+[dir="rtl"] .lang-select {
+  background-position: left 0.55rem center;
+  padding: 0.25rem 0.55rem 0.25rem 1.55rem;
+}
+
+[dir="rtl"] .copy {
+  inset-inline-end: 0.5rem;
 }
