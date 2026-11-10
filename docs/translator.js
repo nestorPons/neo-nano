@@ -211,12 +211,14 @@
     if (!translator) {
       currentLang = SOURCE;
       current = null;
-      store(STORAGE_KEY, SOURCE);
       select.value = SOURCE;
       applyDirection(SOURCE);
       restoreAll();
-      setStatus("");
       select.disabled = false;
+      setStatus("translation unavailable");
+      window.setTimeout(function () {
+        if (run === runId) setStatus("");
+      }, 4000);
       return;
     }
 
