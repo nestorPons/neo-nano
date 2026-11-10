@@ -8,6 +8,8 @@
 A modern terminal text editor that keeps nano's ethos — **simple, fast, easy, comfortable** — with the interface people expect from a TUI today. Written in Rust.
 
 > The binary is `nnano`. This repository is `neo-nano`.
+>
+> Website: <https://nestorpons.github.io/neo-nano/> · full reference in ten languages under [`docs/`](docs/).
 
 ## What it is
 

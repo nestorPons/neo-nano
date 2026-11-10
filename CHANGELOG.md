@@ -6,6 +6,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Project website at <https://nestorpons.github.io/neo-nano/>: a dependency-free terminal-retro page (what it is, screenshot, install paths, key reference, author) published from `docs/` on `main` with GitHub Pages — no build step and no GitHub Actions.
 - `Shift+↑` / `Shift+↓` extend the mark by whole lines, editor-style: the first press starts the mark at the cursor, later presses grow the selection and keep the wanted visual column. Inside a panel the same keys move the highlighted row.
 - A one-column scrollbar on the right edge of the text area, with a proportional thumb; clicking it jumps to that part of the file without moving the cursor. The column is reserved, so the text width does not change when a file grows past the screen.
 - A built-in grammar set covers the most common languages, so highlighting works without nano installed: html/htmx/vue/svelte/astro, js/ts/tsx/jsx/jx, php/phtml, go, css/scss/sass/less, json, xml/svg, yaml, toml, ini, dotenv, Dockerfile, ignore files, markdown, shell, python, rust, c/c++, java and sql. A grammar with the same name in a user or distro directory wins.

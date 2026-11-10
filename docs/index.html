@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>neo-nano — un editor de texto para la terminal</title>
+  <meta name="description" content="nnano es un editor de texto de terminal moderno escrito en Rust: la filosofía de nano (simple, rápido, fácil, cómodo) con teclas de escritorio, ratón, deshacer agrupado, paleta de comandos, diez idiomas y recuperación de trabajo sin guardar.">
+  <meta name="author" content="Nestor Pons">
+  <meta name="theme-color" content="#050806">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="neo-nano — un editor de texto para la terminal">
+  <meta property="og:description" content="La filosofía de nano, con lo que se espera de un TUI hoy. Escrito en Rust. El binario es nnano; el repositorio es neo-nano.">
+  <meta property="og:url" content="https://nestorpons.github.io/neo-nano/">
+  <meta property="og:image" content="https://nestorpons.github.io/neo-nano/assets/neo-nano.png">
+  <meta property="og:locale" content="es_ES">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+
+  <div class="wrap topnav" aria-label="Navegación principal">
+    <a class="brand" href="./">neo-nano</a>
+    <a href="#que-es">qué es</a>
+    <a href="#instalar">instalar</a>
+    <a href="atajos.html">atajos</a>
+    <a href="#proyecto">proyecto</a>
+    <a href="https://github.com/nestorPons/neo-nano">github ↗</a>
+  </div>
+
+  <header class="wrap term">
+    <div class="term-bar" aria-hidden="true">
+      <span class="dot r"></span>
+      <span class="dot a"></span>
+      <span class="dot g"></span>
+      <span class="term-title">nestor@neo-nano: ~/neo-nano</span>
+    </div>
+    <div class="term-body">
+      <p class="prompt" aria-hidden="true"><span class="user">nestor@neo-nano</span>:<span class="path">~/neo-nano</span>$ <span class="cmd">nnano README.md</span><span class="cursor"></span></p>
+      <h1 class="sr-only">neo-nano: un editor de texto de terminal moderno y compatible con nano</h1>
+      <pre class="logo" aria-hidden="true"> _   _ _____ ___       _   _   _    _   _  ___
+| \ | | ____/ _ \     | \ | | / \  | \ | |/ _ \
+|  \| |  _|| | | |    |  \| |/ _ \ |  \| | | | |
+| |\  | |__| |_| |    | |\  / ___ \| |\  | |_| |
+|_| \_|_____\___/     |_| \_/_/   \_\_| \_|\___/</pre>
+      <p class="tagline">Un editor de texto para la terminal que conserva el alma de nano — <strong>simple, rápido, fácil, cómodo</strong> — y añade lo que hoy se espera de un TUI. Escrito en Rust.</p>
+      <span class="kicker">v0.1.1 · Rust · MIT</span>
+    </div>
+  </header>
+
+  <main id="contenido" class="wrap">
+    <section id="que-es">
+      <h2>Qué es neo-nano</h2>
+      <p class="lead"><strong>nnano</strong> es una reescritura moderna del editor <strong>nano</strong>. No es un fork de su código en C: es un proyecto nuevo, en Rust, que mantiene su idea central —abrir un archivo y editarlo sin configurar nada— y le suma lo que un editor de terminal debería tener hoy.</p>
+      <p>El <strong>binario</strong> se llama <code>nnano</code>. El <strong>repositorio</strong> se llama <code>neo-nano</code>. Nunca se instala un alias <code>nn</code> ni se reemplaza a nano: los dos conviven y comparten los grammars <code>.nanorc</code>.</p>
+      <div class="note"><strong>Diseño, no carencia:</strong> una sola vista, un solo cursor, sin plugins y sin LSP. Lo que hay funciona y lo que no, no se anuncia.</div>
+    </section>
+
+    <section id="captura">
+      <h2>Así se ve</h2>
+      <figure class="shot">
+        <img src="assets/neo-nano.png" width="1365" height="714" alt="nnano mostrando el README del proyecto: logo ASCII en verde, Markdown resaltado y la barra de estado con la posición del cursor y el total de líneas.">
+        <figcaption>nnano abriendo este README: resaltado de Markdown, logo ASCII y barra de estado <code>línea:columna/total</code>.</figcaption>
+      </figure>
+    </section>
+
+    <section id="caracteristicas">
+      <h2>Lo que trae</h2>
+      <div class="grid">
+        <article class="card">
+          <h3><span class="ico">$</span>Cero configuración</h3>
+          <p><code>nnano archivo.txt</code> abre y edita. No hay ningún archivo obligatorio, y todo se puede ajustar desde la línea de comandos o desde el panel de ajustes.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">⌨</span>Teclas de escritorio</h3>
+          <p><code>Ctrl+S</code> guarda, <code>Ctrl+Q</code> sale, <code>Ctrl+O</code> abre. Las teclas de nano que no chocan se conservan: <code>Ctrl+K</code> corta línea, <code>Ctrl+U</code> pega.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">▣</span>Guardado en el sitio</h3>
+          <p>Trunca y reescribe el archivo real, luego hace <code>fsync</code>. Sin <code>archivo~</code> y sin renombrar temporales: los enlaces duros y los inodos se mantienen.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">#</span>Sintaxis</h3>
+          <p>Grammars <code>.nanorc</code> de nano y un juego propio embebido: html/htmx, js/ts/tsx/jx, php/phtml, go, css/scss, json, yaml, toml, sql, markdown, shell, python, rust, c, java y más.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">≡</span>Búferes y deshacer</h3>
+          <p>Varios búferes con su barra, pestañas, deshacer y rehacer agrupados, y «reemplazar todo» como un solo paso.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">▮</span>Ratón y selección</h3>
+          <p>Clic, arrastre, rueda y barra de scroll a la derecha. Selección por líneas con <code>Shift+↑/↓</code> y selección rectangular con <code>Alt+Z</code> o <code>Alt</code>+arrastrar.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">↺</span>Recuperación</h3>
+          <p>Un búfer con cambios se respalda 2 s después de la última edición y se restaura tras un cuelgue o una sesión SSH cortada.</p>
+        </article>
+        <article class="card">
+          <h3><span class="ico">✎</span>Diez idiomas</h3>
+          <p>English, 简体中文, हिन्दी, Español, العربية, Français, বাংলা, Português, Bahasa Indonesia y 日本語, en la interfaz y en la ayuda.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="instalar">
+      <h2>Instalar</h2>
+      <p>En Arch, el paquete sigue <code>main</code> (también hay uno estable):</p>
+      <div class="code">
+        <button class="copy" type="button" data-copy="cmd-aur">copiar</button>
+        <pre id="cmd-aur"><span class="comment"># Arch / AUR</span>
+yay -S nnano-git</pre>
+      </div>
+      <p>Desde el código fuente, con Rust 1.88 o más nuevo:</p>
+      <div class="code">
+        <button class="copy" type="button" data-copy="cmd-src">copiar</button>
+        <pre id="cmd-src">git clone https://github.com/nestorPons/neo-nano
+cd neo-nano
+cargo build --release
+install -Dm755 target/release/nnano ~/.local/bin/nnano</pre>
+      </div>
+      <p class="muted">El paquete instala <code>nnano(1)</code> (<code>man nnano</code>) y las completions de bash, zsh y fish. Desde el código fuente viven en <code>man/</code> y <code>completions/</code>.</p>
+    </section>
+
+    <section id="atajos">
+      <h2>Atajos</h2>
+      <p>Mapa de teclas de escritorio por defecto. La referencia completa, con las diferencias respecto a nano y los límites del terminal, está en <a href="atajos.html">los atajos</a>.</p>
+      <div class="table-wrap">
+        <table>
+          <caption>Lo esencial para empezar</caption>
+          <thead>
+            <tr><th scope="col">Acción</th><th scope="col">Tecla</th><th scope="col">Alternativa</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Guardar / guardar como</td><td><kbd>Ctrl+S</kbd> / <kbd>Alt+S</kbd></td><td>—</td></tr>
+            <tr><td>Abrir / recargar / insertar</td><td><kbd>Ctrl+O</kbd> / <kbd>Ctrl+R</kbd> / <kbd>Alt+I</kbd></td><td>—</td></tr>
+            <tr><td>Salir / cerrar búfer</td><td><kbd>Ctrl+Q</kbd> / <kbd>Ctrl+W</kbd></td><td>—</td></tr>
+            <tr><td>Deshacer / rehacer</td><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td><kbd>Alt+U</kbd> / <kbd>Alt+E</kbd></td></tr>
+            <tr><td>Cortar / copiar / pegar</td><td><kbd>Ctrl+X</kbd> / <kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></td><td>pegar: <kbd>Ctrl+U</kbd></td></tr>
+            <tr><td>Buscar / siguiente</td><td><kbd>Ctrl+F</kbd> / <kbd>F3</kbd></td><td>siguiente: <kbd>Alt+W</kbd></td></tr>
+            <tr><td>Seleccionar todo / marcar</td><td><kbd>Ctrl+A</kbd> / <kbd>Alt+A</kbd></td><td>—</td></tr>
+            <tr><td>Selección por líneas</td><td><kbd>Shift+↑</kbd> / <kbd>Shift+↓</kbd></td><td>—</td></tr>
+            <tr><td>Ir a línea</td><td><kbd>Ctrl+G</kbd></td><td><kbd>Alt+G</kbd></td></tr>
+            <tr><td>Paleta / ajustes / ayuda</td><td><kbd>Ctrl+P</kbd> / <kbd>Alt+,</kbd> / <kbd>Ctrl+H</kbd></td><td>ayuda: <kbd>F1</kbd></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">Referencia en tu idioma:
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/en/shortcuts.md">English</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/es/shortcuts.md">Español</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/zh-Hans/shortcuts.md">简体中文</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/ja/shortcuts.md">日本語</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/hi/shortcuts.md">हिन्दी</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/ar/shortcuts.md">العربية</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/fr/shortcuts.md">Français</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/bn/shortcuts.md">বাংলা</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/pt/shortcuts.md">Português</a> ·
+        <a href="https://github.com/nestorPons/neo-nano/blob/main/docs/id/shortcuts.md">Bahasa Indonesia</a>
+      </p>
+    </section>
+
+    <section id="proyecto">
+      <h2>Proyecto y autor</h2>
+      <div class="about">
+        <div class="panel">
+          <h3>Autor</h3>
+          <p><strong>Nestor Pons</strong> — escribe software en Rust y mantiene neo-nano.</p>
+          <div class="links">
+            <a class="btn" href="https://github.com/nestorPons">github.com/nestorPons ↗</a>
+            <a class="btn" href="mailto:nestorpons@gmail.com">correo</a>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Enlaces</h3>
+          <ul class="plain">
+            <li><a href="https://github.com/nestorPons/neo-nano">Código y releases</a></li>
+            <li><a href="https://github.com/nestorPons/neo-nano/issues">Errores y sugerencias</a></li>
+            <li><a href="https://github.com/nestorPons/neo-nano/blob/main/CHANGELOG.md">Changelog</a></li>
+            <li><a href="https://github.com/nestorPons/neo-nano/blob/main/LICENSE">Licencia MIT</a></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Detalles</h3>
+          <ul class="plain">
+            <li>Versión <strong>0.1.1</strong></li>
+            <li>Rust 1.88 · edición 2024</li>
+            <li><code>nnano-core</code> · <code>nnano-tui</code> · <code>nnano</code></li>
+            <li>Sin runtime asíncrono, sin plugins, sin LSP</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p class="prompt" aria-hidden="true"><span class="user">nestor@neo-nano</span>:<span class="path">~</span>$ <span class="cmd">exit</span><span class="cursor"></span></p>
+      <p>© 2026 Nestor Pons · MIT · hecho con Rust y cariño por la terminal.</p>
+    </div>
+  </footer>
+</body>
+</html>
