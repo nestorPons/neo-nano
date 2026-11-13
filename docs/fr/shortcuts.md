@@ -48,12 +48,13 @@ La colonne *Alternative* donne le raccourci hérité de nano, lorsqu'il existe.
 | Première ligne | `Alt+\` | `Alt+\` |
 | Dernière ligne | `Alt+/` | `Alt+/` |
 | Un mot à gauche / à droite | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
-| Étendre la sélection vers le haut / le bas | `Shift+↑` / `Shift+↓` | — |
+| Étendre la sélection par caractère | `Shift+←` / `Shift+→` | — |
+| Étendre la sélection par ligne | `Shift+↑` / `Shift+↓` | — |
 | Une page en haut | `PgUp` | `Alt+↑` |
 | Une page en bas | `PgDn` | `Alt+↓` |
 | Un caractère en arrière | `Ctrl+B` | `Ctrl+B` |
 
-`Shift+↑`/`Shift+↓` commencent une marque au curseur et l'étendent par lignes entières en conservant la colonne visuelle ; `Esc` la retire. Une fois la marque posée, tout déplacement l'étend, comme dans nano.
+`Shift+←`/`Shift+→` étendent la marque par caractères et `Shift+↑`/`Shift+↓` par lignes en conservant la colonne visuelle, comme dans un éditeur de bureau ; `Esc` la retire. Une fois la marque posée, tout déplacement l'étend, comme dans nano. `Ctrl+C` copie puis retire la marque, donc le `Ctrl+V` suivant insère au curseur.
 
 ## Recherche
 
@@ -109,7 +110,7 @@ Inchangés : `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B
 - `Ctrl+B` est le préfixe par défaut de tmux ; `Ctrl+A`, celui de screen.
 - `Ctrl+Shift+<lettre>` n'est pas fiable sur les terminaux anciens : il n'y a pas de `Ctrl+Shift+Z` pour rétablir.
 - Pour sélectionner du texte avec le terminal, maintenez `Shift` en glissant.
-- nnano utilise la souris quand l'option `mouse` est active (par défaut) : un clic place le curseur, un glissement marque, `Alt`+glissement marque un rectangle, la molette défile sans déplacer le curseur, et un clic sur la barre de défilement à droite saute à cette partie du fichier.
+- nnano utilise la souris quand l'option `mouse` est active (par défaut) : un clic place le curseur, un glissement marque, `Alt`+glissement marque un rectangle, la molette défile sans déplacer le curseur, et un clic sur la barre de défilement à droite saute à cette partie du fichier. Relâcher le bouton copie le texte marqué dans le registre interne et dans le presse-papiers du système (OSC 52) ; la marque reste visible jusqu'à un clic ailleurs ou `Esc`.
 - La barre d'état affiche `ligne:colonne/total` : la ligne du curseur, sa colonne visuelle et le nombre total de lignes du document.
 - Groupes d'annulation : la frappe est groupée par mot et par une pause de 400 ms ; couper, coller, enregistrer et changer de tampon ferment le groupe. « Tout remplacer » est une seule étape.
 - `Ctrl+H` ouvre la référence des raccourcis. Retour arrière est la touche `Backspace` du terminal (`0x7F`) : si votre terminal envoie `0x08`, cette touche ouvre l'aide — configurez-le pour envoyer `0x7F`.
@@ -122,5 +123,5 @@ Inchangés : `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B
 - `Ctrl+R` relit le fichier du tampon depuis le disque et remplace le texte ; l'historique d'annulation de l'ancien texte est abandonné. En cas de modifications non enregistrées, il demande une fois (`Ctrl+R` à nouveau recharge, `Ctrl+S` enregistre).
 - `Alt+I` demande un fichier et insère son texte au curseur en une seule étape d'annulation ; `Tab` complète le chemin. Le tampon garde son nom et son encodage.
 - Tant qu'un tampon a des modifications non enregistrées, nnano écrit un instantané de récupération 2 s après la dernière modification dans `$XDG_STATE_HOME/nnano/recovery/`. Un plantage ou une session SSH tuée est restauré automatiquement au démarrage suivant (`recovered unsaved changes for …`) ; enregistrer ou quitter proprement le supprime.
-- `Ctrl+C` et `Alt+6` copient toujours dans le registre interne. Activez l'option `osc52` (`--osc52`) pour envoyer aussi la copie au presse-papiers du système, plafonnée à 64 Kio ; une troncature est signalée dans la barre d'état.
+- `Ctrl+C` et `Alt+6` copient toujours dans le registre interne. Activez l'option `osc52` (`--osc52`) pour envoyer aussi la copie au presse-papiers du système, plafonnée à 64 Kio ; une troncature est signalée dans la barre d'état. La barre d'état indique la taille copiée, et `Ctrl+V` sur un registre vide le signale.
 - `Ctrl+J` réenroule le paragraphe autour du curseur (ou les lignes marquées) à la largeur de la zone de texte, en conservant l'indentation de la première ligne. C'est une seule étape d'annulation.

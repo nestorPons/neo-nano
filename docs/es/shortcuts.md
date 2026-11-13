@@ -48,12 +48,13 @@ La columna *Alternativa* es el binding heredado de nano, cuando existe.
 | Primera línea | `Alt+\` | `Alt+\` |
 | Última línea | `Alt+/` | `Alt+/` |
 | Palabra a la izquierda / derecha | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
-| Extender la selección arriba / abajo | `Shift+↑` / `Shift+↓` | — |
+| Extender la selección por carácter | `Shift+←` / `Shift+→` | — |
+| Extender la selección por línea | `Shift+↑` / `Shift+↓` | — |
 | Página arriba | `PgUp` | `Alt+↑` |
 | Página abajo | `PgDn` | `Alt+↓` |
 | Retroceder un carácter | `Ctrl+B` | `Ctrl+B` |
 
-`Shift+↑`/`Shift+↓` inician una marca en el cursor y la extienden por líneas completas, conservando la columna visual; `Esc` la quita. Con una marca activa, cualquier movimiento la extiende, como en nano.
+`Shift+←`/`Shift+→` extienden la marca por caracteres y `Shift+↑`/`Shift+↓` por líneas conservando la columna visual, como en un editor de escritorio; `Esc` la quita. Con una marca activa, cualquier movimiento la extiende, como en nano. `Ctrl+C` copia y luego quita la marca, así que el siguiente `Ctrl+V` inserta en el cursor.
 
 ## Búsqueda
 
@@ -109,7 +110,7 @@ Se conservan sin cambios: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctr
 - `Ctrl+B` es el prefijo por defecto de tmux; `Ctrl+A`, el de screen.
 - `Ctrl+Shift+letra` no es fiable en terminales antiguos: no hay atajo de rehacer con `Ctrl+Shift+Z`.
 - Para seleccionar texto nativo del terminal, mantén `Shift` al arrastrar.
-- nnano usa el ratón si la opción `mouse` está activa (por defecto): clic coloca el cursor, arrastrar marca, `Alt`+arrastrar marca un rectángulo, la rueda desplaza sin mover el cursor y hacer clic en la barra de la derecha salta a esa parte del archivo.
+- nnano usa el ratón si la opción `mouse` está activa (por defecto): clic coloca el cursor, arrastrar marca, `Alt`+arrastrar marca un rectángulo, la rueda desplaza sin mover el cursor y hacer clic en la barra de la derecha salta a esa parte del archivo. Al soltar el botón se copia lo marcado al registro interno y al portapapeles del sistema (OSC 52); la marca sigue visible hasta que hagas clic en otro sitio o pulses `Esc`.
 - La barra de estado muestra `línea:columna/total`: la línea del cursor, su columna visual y el total de líneas del documento.
 - Grupos de deshacer: se agrupa por palabra y por una pausa de 400 ms; cortar, pegar, guardar y cambiar de búfer cierran el grupo. «Reemplazar todo» es un solo paso.
 - `Ctrl+H` abre la referencia de atajos. Retroceso es la tecla Backspace del terminal (`0x7F`): si tu terminal envía `0x08` al pulsar Backspace, esa tecla abre la ayuda; configúralo para enviar `0x7F`.
@@ -122,5 +123,5 @@ Se conservan sin cambios: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctr
 - `Ctrl+R` relee del disco el archivo de este búfer y reemplaza el texto; el historial de deshacer del texto anterior se descarta. Si hay cambios sin guardar, pregunta una vez (`Ctrl+R` otra vez recarga, `Ctrl+S` guarda).
 - `Alt+I` pide un archivo e inserta su texto en el cursor como un solo paso de deshacer; `Tab` completa la ruta. El búfer conserva su nombre y su codificación.
 - Mientras un búfer tiene cambios sin guardar, nnano escribe una copia de recuperación 2 s después de la última edición en `$XDG_STATE_HOME/nnano/recovery/`. Un cuelgue o una sesión SSH cortada se restauran automáticamente al arrancar (`recovered unsaved changes for …`); guardar o salir limpiamente la borran.
-- `Ctrl+C` y `Alt+6` siempre copian al registro interno. Activa la opción `osc52` (`--osc52`) para enviar además la copia al portapapeles del sistema, con tope de 64 KiB; si se trunca, se avisa en la barra de estado.
+- `Ctrl+C` y `Alt+6` siempre copian al registro interno. Activa la opción `osc52` (`--osc52`) para enviar además la copia al portapapeles del sistema, con tope de 64 KiB; si se trunca, se avisa en la barra de estado. La barra indica cuánto se copió, y `Ctrl+V` con el registro vacío lo avisa.
 - `Ctrl+J` reajusta el párrafo del cursor (o las líneas marcadas) al ancho del área de texto, conservando la sangría de la primera línea. Es un solo paso de deshacer.

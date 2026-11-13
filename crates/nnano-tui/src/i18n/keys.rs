@@ -218,6 +218,20 @@ pub const KEYS: &[Entry] = &[
         "মার্ক এক লাইন নিচে বাড়ান", "Estender a marca uma linha abaixo",
         "Perluas tanda satu baris ke bawah", "選択範囲を 1 行下へ拡張",
     ]),
+    entry!("Extend the mark one character left" => [
+        "Extend the mark one character left", "向左扩展选区一个字符",
+        "चिह्न एक अक्षर बाएँ बढ़ाएँ", "Extender la marca un carácter a la izquierda",
+        "توسيع التحديد محرفًا لليسار", "Étendre la marque d'un caractère vers la gauche",
+        "মার্ক এক অক্ষর বামে বাড়ান", "Estender a marca um caractere à esquerda",
+        "Perluas tanda satu karakter ke kiri", "選択範囲を 1 文字左へ拡張",
+    ]),
+    entry!("Extend the mark one character right" => [
+        "Extend the mark one character right", "向右扩展选区一个字符",
+        "चिह्न एक अक्षर दाएँ बढ़ाएँ", "Extender la marca un carácter a la derecha",
+        "توسيع التحديد محرفًا لليمين", "Étendre la marque d'un caractère vers la droite",
+        "মার্ক এক অক্ষর ডানে বাড়ান", "Estender a marca um caractere à direita",
+        "Perluas tanda satu karakter ke kanan", "選択範囲を 1 文字右へ拡張",
+    ]),
     entry!("Start of line" => [
         "Start of line", "行首", "पंक्ति का आरंभ", "Inicio de línea",
         "بداية السطر", "Début de ligne", "লাইনের শুরু", "Início da linha",
@@ -382,6 +396,15 @@ pub const KEYS: &[Entry] = &[
         "وضع المؤشر / بدء التحديد", "Placer le curseur / commencer la marque",
         "কার্সর রাখুন / মার্ক শুরু", "Posicionar o cursor / iniciar a marca",
         "Letakkan kursor / mulai tanda", "カーソルを置く / 選択開始",
+    ]),
+    entry!("Copy the mark to the clipboard" => [
+        "Copy the mark to the clipboard", "复制选区到剪贴板",
+        "चिह्न को क्लिपबोर्ड में कॉपी करें",
+        "Copiar la marca al portapapeles",
+        "نسخ التحديد إلى الحافظة", "Copier la marque dans le presse-papiers",
+        "মার্ক ক্লিপবোর্ডে কপি করুন",
+        "Copiar a marca para a área de transferência",
+        "Salin tanda ke papan klip", "選択範囲をクリップボードへコピー",
     ]),
     entry!("Scroll the view" => [
         "Scroll the view", "滚动视图", "दृश्य स्क्रॉल करें",

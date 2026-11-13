@@ -101,14 +101,15 @@
             <tr><td data-i18n>First line</td><td><kbd>Alt+\</kbd></td><td><kbd>Alt+\</kbd></td></tr>
             <tr><td data-i18n>Last line</td><td><kbd>Alt+/</kbd></td><td><kbd>Alt+/</kbd></td></tr>
             <tr><td data-i18n>Word left / right</td><td><kbd>Ctrl+←</kbd> / <kbd>Ctrl+→</kbd></td><td><kbd>Alt+←</kbd> / <kbd>Alt+→</kbd></td></tr>
-            <tr><td data-i18n>Extend selection up / down</td><td><kbd>Shift+↑</kbd> / <kbd>Shift+↓</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Extend selection by character</td><td><kbd>Shift+←</kbd> / <kbd>Shift+→</kbd></td><td>—</td></tr>
+            <tr><td data-i18n>Extend selection by line</td><td><kbd>Shift+↑</kbd> / <kbd>Shift+↓</kbd></td><td>—</td></tr>
             <tr><td data-i18n>Page up</td><td><kbd>PgUp</kbd></td><td><kbd>Alt+↑</kbd></td></tr>
             <tr><td data-i18n>Page down</td><td><kbd>PgDn</kbd></td><td><kbd>Alt+↓</kbd></td></tr>
             <tr><td data-i18n>Back one character</td><td><kbd>Ctrl+B</kbd></td><td><kbd>Ctrl+B</kbd></td></tr>
           </tbody>
         </table>
       </div>
-      <p class="muted" data-i18n><kbd>Shift+↑</kbd>/<kbd>Shift+↓</kbd> start a mark at the cursor and extend it by whole lines, keeping the visual column; <kbd>Esc</kbd> clears it. Once a mark exists, any movement extends it, as in nano.</p>
+      <p class="muted" data-i18n><kbd>Shift+←</kbd>/<kbd>Shift+→</kbd> extend the mark by characters, and <kbd>Shift+↑</kbd>/<kbd>Shift+↓</kbd> by lines keeping the visual column, as in a desktop editor; <kbd>Esc</kbd> clears it. Any movement extends an existing mark, as in nano. <kbd>Ctrl+C</kbd> copies and then ends the mark, so the next <kbd>Ctrl+V</kbd> inserts at the cursor.</p>
     </section>
 
     <section id="search">
@@ -179,7 +180,7 @@
         <li data-i18n><kbd>Ctrl+B</kbd> is tmux's default prefix; <kbd>Ctrl+A</kbd> is screen's.</li>
         <li data-i18n><kbd>Ctrl+Shift+&lt;letter&gt;</kbd> is unreliable on legacy terminals: there is no <kbd>Ctrl+Shift+Z</kbd> redo.</li>
         <li data-i18n>To select text with the terminal natively, hold <kbd>Shift</kbd> while dragging.</li>
-        <li data-i18n>nnano uses the mouse when the <code>mouse</code> option is on (the default): click places the cursor, drag marks, <kbd>Alt</kbd>+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file.</li>
+        <li data-i18n>nnano uses the mouse when the <code>mouse</code> option is on (the default): click places the cursor, drag marks, <kbd>Alt</kbd>+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file. Releasing the button copies the marked text to the internal register and to the system clipboard (OSC 52); the highlight stays until you click elsewhere or press <kbd>Esc</kbd>.</li>
         <li data-i18n>The status bar shows <code>line:column/total</code>: the cursor line, its visual column and the document's total line count.</li>
         <li data-i18n>Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. “Replace all” is one undo step.</li>
         <li data-i18n><kbd>Ctrl+H</kbd> opens the shortcut reference. Backspace is the terminal's Backspace key (<code>0x7F</code>): if your terminal sends <code>0x08</code> for Backspace, that key opens help — set it to send <code>0x7F</code>.</li>
@@ -195,7 +196,7 @@
         <li data-i18n><kbd>Ctrl+R</kbd> re-reads this buffer's file from disk and replaces the text; the undo history of the old text is dropped. With unsaved changes it asks once (<kbd>Ctrl+R</kbd> again reloads, <kbd>Ctrl+S</kbd> saves).</li>
         <li data-i18n><kbd>Alt+I</kbd> asks for a file and inserts its text at the cursor as one undo step; <kbd>Tab</kbd> completes the path. The buffer keeps its own name and encoding.</li>
         <li data-i18n>While a buffer has unsaved changes, nnano writes a recovery snapshot 2 s after the last edit under <code>$XDG_STATE_HOME/nnano/recovery/</code>. A crash or a killed SSH session is restored automatically on the next start (<code>recovered unsaved changes for …</code>); saving or a clean exit deletes it.</li>
-        <li data-i18n><kbd>Ctrl+C</kbd> and <kbd>Alt+6</kbd> always copy into the internal register. Enable the <code>osc52</code> option (<code>--osc52</code>) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar.</li>
+        <li data-i18n><kbd>Ctrl+C</kbd> and <kbd>Alt+6</kbd> always copy into the internal register. Enable the <code>osc52</code> option (<code>--osc52</code>) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar. The status bar reports the copied size, and <kbd>Ctrl+V</kbd> on an empty register says so.</li>
         <li data-i18n><kbd>Ctrl+J</kbd> re-wraps the paragraph around the cursor (or the marked lines) to the width of the text area, keeping the first line's indent. It is one undo step.</li>
       </ul>
     </section>

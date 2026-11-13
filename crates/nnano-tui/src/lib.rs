@@ -136,6 +136,9 @@ pub struct App {
     /// recovery file entirely: tests and a `HOME`-less environment must not
     /// write anything.
     recovery_dir: Option<PathBuf>,
+    /// A left press landed in the text body, so the matching release copies the
+    /// mark (copy-on-select). A press on the bar or a panel does not set it.
+    mouse_selecting: bool,
     /// When the next snapshot is due. Set by every edit, cleared when it is
     /// written or when the buffer becomes clean: a 2 s idle debounce, never a
     /// timer in the redraw path.
@@ -174,6 +177,7 @@ impl App {
             syntax_enabled: true,
             follow_cursor: true,
             recovery_dir: None,
+            mouse_selecting: false,
             recovery_due: None,
         };
         app.sync_editors();
@@ -332,12 +336,14 @@ impl App {
         self.follow_cursor = !matches!(action, Action::ScrollView(_));
 
         if self.overlay.is_some() {
-            // Shift+↑/↓ extend a mark in the text, but a panel has no mark: there
-            // they move the highlighted row like the plain arrows, so the
-            // existing navigation does not regress.
+            // Shift+arrows extend a mark in the text, but a panel has no mark:
+            // there they move the highlight or the prompt cursor like the plain
+            // arrows, so the existing navigation does not regress.
             let action = match action {
                 Action::SelectUp => Action::MoveUp,
                 Action::SelectDown => Action::MoveDown,
+                Action::SelectLeft => Action::MoveLeft,
+                Action::SelectRight => Action::MoveRight,
                 other => other,
             };
             self.apply_overlay(action, confirming_quit);
@@ -366,7 +372,18 @@ impl App {
             // Copy is the one edit that may leave the process: OSC 52 is opt-in.
             Action::Copy => {
                 self.editor_mut().apply(Action::Copy);
-                self.copy_out();
+                let copied = self.editor().register().chars().count().to_string();
+                self.inform(tf(self.lang(), "copied {} chars", &[&copied]));
+                self.copy_out(false);
+            }
+            // An empty register is the other silent no-op: say so instead of
+            // letting `^V` look broken.
+            Action::Paste => {
+                if self.editor().register().is_empty() {
+                    self.inform(t(self.lang(), "nothing to paste"));
+                } else {
+                    self.editor_mut().apply(Action::Paste);
+                }
             }
             Action::NewBuffer | Action::NewTab => self.new_buffer(),
             Action::CloseBuffer => self.close_buffer(confirming_close),
@@ -1083,8 +1100,8 @@ impl App {
     /// The OSC 52 sequence for the current register, when the `osc52` option is on
     /// and there is something to send. Split out from the write so the decision is
     /// testable without a terminal.
-    fn clipboard_sequence(&self) -> Option<(String, bool)> {
-        if !self.config.bool(Opt::Osc52) {
+    fn clipboard_sequence(&self, force: bool) -> Option<(String, bool)> {
+        if !force && !self.config.bool(Opt::Osc52) {
             return None;
         }
         let text = self.editor().register();
@@ -1095,9 +1112,10 @@ impl App {
     }
 
     /// Send the freshly copied register to the terminal's clipboard when the
-    /// `osc52` option is on. Truncation is reported, never silent.
-    fn copy_out(&mut self) {
-        let Some((sequence, truncated)) = self.clipboard_sequence() else {
+    /// `osc52` option is on, or unconditionally when `force` is set (mouse
+    /// copy-on-select). Truncation is reported, never silent.
+    fn copy_out(&mut self, force: bool) {
+        let Some((sequence, truncated)) = self.clipboard_sequence(force) else {
             return;
         };
         if let Err(err) = clipboard::emit(&sequence) {
@@ -1106,6 +1124,18 @@ impl App {
             let limit = (clipboard::OSC52_LIMIT / 1024).to_string();
             self.inform(tf(self.lang(), "clipboard truncated to {} KiB", &[&limit]));
         }
+    }
+
+    /// Mouse release: copy the mark to the internal register and out to the
+    /// terminal, keeping the highlight. Selecting text is the request, so the
+    /// `osc52` option does not gate this one; `^C` still respects it.
+    fn copy_marked_out(&mut self) {
+        let Some(chars) = self.editor_mut().copy_marked() else {
+            return;
+        };
+        self.inform(tf(self.lang(), "copied {} chars", &[&chars.to_string()]));
+        self.copy_out(true);
+        self.redraw = true;
     }
 
     /// Schedule (or cancel) the next snapshot after an action. Only a dirty buffer
@@ -1527,6 +1557,11 @@ impl App {
             self.on_overlay_mouse(event);
             return;
         }
+        // A new press re-arms copy-on-select only when it lands in the text; a
+        // press on a tab, the bar or outside the body must cancel a stale one.
+        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            self.mouse_selecting = false;
+        }
         if let Some(tabs) = self.tabs_rect()
             && self.hits(event.column, event.row, tabs)
         {
@@ -1554,11 +1589,19 @@ impl App {
                 if event.modifiers.contains(KeyModifiers::ALT) && !self.editor().block_mode() {
                     self.apply(Action::ToggleBlockSelection);
                 }
+                self.mouse_selecting = true;
                 self.apply(Action::ClickAt(line, col));
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some((line, col)) = self.hit_test(event.column, event.row, body) {
                     self.apply(Action::ExtendTo(line, col));
+                }
+            }
+            // Copy on select: the press started in the text, so the release owns a
+            // mark. The mark stays visible; only `^C` ends it.
+            MouseEventKind::Up(MouseButton::Left) => {
+                if std::mem::take(&mut self.mouse_selecting) {
+                    self.copy_marked_out();
                 }
             }
             MouseEventKind::ScrollDown => self.apply(Action::ScrollView(3)),
@@ -1854,6 +1897,50 @@ mod tests {
         app.screen = (80, 24);
         app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 0));
         assert_eq!(app.editor().cursor().col(), 0);
+    }
+
+    #[test]
+    fn releasing_the_mouse_copies_the_mark_out() {
+        let mut app = App::from_text("s.txt", "uno dos\n");
+        app.screen = (80, 24);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        app.on_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 3, 0));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 3, 0));
+
+        assert_eq!(app.editor().register(), "uno");
+        assert!(app.editor().has_selection(), "the mark stays visible");
+        assert!(app.message().unwrap().contains('3'), "copied 3 chars");
+        // Copy-on-select does not wait for `--osc52`: it is what selecting means.
+        let (sequence, _) = app.clipboard_sequence(true).unwrap();
+        assert!(sequence.contains("dW5v"), "{sequence:?}"); // base64("uno")
+        assert!(!app.mouse_selecting);
+    }
+
+    #[test]
+    fn releasing_after_a_plain_click_leaves_the_register_alone() {
+        let mut app = App::from_text("s.txt", "uno\n");
+        app.screen = (80, 24);
+        app.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        app.on_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 1, 0));
+        assert!(app.editor().register().is_empty());
+        assert!(app.message().is_none());
+    }
+
+    #[test]
+    fn copy_reports_the_size_and_an_empty_paste_says_so() {
+        let mut app = App::from_text("c.txt", "uno\ndos\n");
+        app.apply(Action::SelectAll);
+        app.apply(Action::Copy);
+        assert!(
+            app.message().unwrap().contains('8'),
+            "{}",
+            app.message().unwrap()
+        );
+        assert!(!app.editor().has_selection());
+
+        let mut empty = App::from_text("e.txt", "");
+        empty.apply(Action::Paste);
+        assert!(empty.message().unwrap().contains("paste"));
     }
 
     #[test]
@@ -2979,19 +3066,19 @@ mod tests {
         let mut app = App::from_text("s.txt", "uno\n");
         app.apply(Action::Copy);
         assert!(
-            app.clipboard_sequence().is_none(),
+            app.clipboard_sequence(false).is_none(),
             "OSC 52 is opt-in, and off by default"
         );
 
         app.apply_config(config(&[(Opt::Osc52, Value::Bool(true))]));
         app.apply(Action::Copy);
-        let (sequence, truncated) = app.clipboard_sequence().unwrap();
+        let (sequence, truncated) = app.clipboard_sequence(false).unwrap();
         assert!(sequence.starts_with("\x1b]52;c;"), "{sequence:?}");
         assert!(!truncated);
 
         let mut empty = App::from_text("s.txt", "");
         empty.apply_config(config(&[(Opt::Osc52, Value::Bool(true))]));
         empty.apply(Action::Copy);
-        assert!(empty.clipboard_sequence().is_none(), "nothing to send");
+        assert!(empty.clipboard_sequence(false).is_none(), "nothing to send");
     }
 }

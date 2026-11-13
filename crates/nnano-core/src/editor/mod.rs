@@ -118,6 +118,10 @@ pub enum Action {
     SelectUp,
     /// `Shift+↓`: extend the mark one line down, starting one if there is none.
     SelectDown,
+    /// `Shift+←`: extend the mark one character left, starting one if there is none.
+    SelectLeft,
+    /// `Shift+→`: extend the mark one character right, starting one if there is none.
+    SelectRight,
     MoveLineStart,
     MoveLineEnd,
     MoveFileStart,
@@ -305,6 +309,8 @@ impl Editor {
             Action::MoveDown => self.move_vertical(1),
             Action::SelectUp => self.extend_vertical(-1),
             Action::SelectDown => self.extend_vertical(1),
+            Action::SelectLeft => self.extend_horizontal(-1),
+            Action::SelectRight => self.extend_horizontal(1),
             Action::MoveLineStart => {
                 self.cursor = Cursor::new(self.cursor.line(), 0);
                 self.goal_col = None;
@@ -371,6 +377,22 @@ impl Editor {
             self.selection = Some(Selection::new(self.cursor, self.cursor, mode));
         }
         self.move_vertical(delta);
+    }
+
+    /// `Shift+←`/`Shift+→`: the horizontal twin of [`Editor::extend_vertical`].
+    /// One character at a time, crossing the line break like a plain arrow, and
+    /// the goal column is forgotten — a desktop editor behaves the same way.
+    fn extend_horizontal(&mut self, delta: isize) {
+        if self.selection.is_none() {
+            let mode = self.mark_mode();
+            self.selection = Some(Selection::new(self.cursor, self.cursor, mode));
+        }
+        if delta < 0 {
+            self.move_left();
+        } else {
+            self.move_right();
+        }
+        self.follow();
     }
 
     pub fn selection(&self) -> Option<&Selection> {
@@ -501,10 +523,29 @@ impl Editor {
     fn copy(&mut self) {
         match self.selection {
             Some(selection) if !selection.is_empty() => {
-                self.register = selection.text(&self.buffer)
+                self.register = selection.text(&self.buffer);
+                // The copy is done, so the mark ends here: without this, the next
+                // arrow key would extend it (nano's mark semantics) and `^V`
+                // would replace everything the cursor walked over — the copy
+                // looked like it had failed. Same as leaving visual mode in vim.
+                self.selection = None;
             }
             _ => self.register = self.line_with_terminator(self.cursor.line()),
         }
+    }
+
+    /// Mouse release: copy the marked region without ending the mark, so the
+    /// highlight stays visible after the copy. Returns how many chars were taken,
+    /// or `None` when there is no mark (a plain click must not touch the register).
+    pub fn copy_marked(&mut self) -> Option<usize> {
+        let selection = self.selection.filter(|selection| !selection.is_empty())?;
+        let text = selection.text(&self.buffer);
+        if text.is_empty() {
+            return None;
+        }
+        let chars = text.chars().count();
+        self.register = text;
+        Some(chars)
     }
 
     /// `^X`: the mark when there is one, otherwise the current line.
@@ -1129,6 +1170,47 @@ mod tests {
     }
 
     #[test]
+    fn shift_right_selects_characters_and_crosses_the_line_break() {
+        let mut editor = editor("uno\ndos");
+        editor.set_cursor(0, 1);
+        editor.apply(Action::SelectRight);
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "n");
+        editor.apply(Action::SelectRight);
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "no");
+        // The line break is one character, so the mark reaches the next row.
+        editor.apply(Action::SelectRight);
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "no\n");
+        assert_eq!(at(&editor), (1, 0));
+    }
+
+    #[test]
+    fn shift_left_selects_backwards_and_shrinks_with_the_cursor() {
+        let mut editor = editor("uno\ndos");
+        editor.set_cursor(1, 1);
+        editor.apply(Action::SelectLeft);
+        assert_eq!(at(&editor), (1, 0));
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "d");
+        editor.apply(Action::SelectLeft);
+        assert_eq!(at(&editor), (0, 3));
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "\nd");
+        editor.apply(Action::SelectLeft);
+        assert_eq!(at(&editor), (0, 2));
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "o\nd");
+    }
+
+    #[test]
+    fn shift_arrows_share_one_mark_and_extend_it_in_both_axes() {
+        let mut editor = editor("uno\ndos\ntres");
+        editor.set_cursor(1, 1);
+        editor.apply(Action::SelectRight);
+        editor.apply(Action::SelectDown);
+        editor.apply(Action::SelectLeft);
+        // The anchor stays at the first Shift press; only the head follows.
+        assert_eq!(at(&editor), (2, 1));
+        assert_eq!(editor.selection().unwrap().text(editor.buffer()), "os\nt");
+    }
+
+    #[test]
     fn shift_vertical_extends_a_rectangular_mark() {
         let mut editor = editor("abc\ndef\nghi");
         editor.apply(Action::ToggleBlockSelection);
@@ -1186,6 +1268,27 @@ mod tests {
         assert!(editor.selection().is_some());
         editor.apply(Action::StartMark);
         assert!(editor.selection().is_none());
+    }
+
+    #[test]
+    fn a_mouse_copy_keeps_the_mark_and_fills_the_register() {
+        let mut editor = editor("uno dos");
+        select(&mut editor, 0, 0, 3);
+        assert_eq!(editor.copy_marked(), Some(3));
+        assert_eq!(editor.register(), "uno");
+        assert!(editor.has_selection(), "the highlight survives the copy");
+    }
+
+    #[test]
+    fn copy_ends_the_mark_so_the_next_paste_inserts_at_the_cursor() {
+        let mut editor = editor("uno dos");
+        select(&mut editor, 0, 0, 3);
+        editor.apply(Action::Copy);
+        assert_eq!(editor.register(), "uno");
+        assert!(!editor.has_selection(), "copy must drop the mark");
+        editor.apply(Action::MoveRight);
+        editor.apply(Action::Paste);
+        assert_eq!(plain(&editor), "uno unodos");
     }
 
     #[test]

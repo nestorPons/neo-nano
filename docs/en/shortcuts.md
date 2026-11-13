@@ -48,12 +48,13 @@ The *Alternative* column is the inherited nano binding, where one exists.
 | First line | `Alt+\` | `Alt+\` |
 | Last line | `Alt+/` | `Alt+/` |
 | Word left / right | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
-| Extend selection up / down | `Shift+↑` / `Shift+↓` | — |
+| Extend selection by character | `Shift+←` / `Shift+→` | — |
+| Extend selection by line | `Shift+↑` / `Shift+↓` | — |
 | Page up | `PgUp` | `Alt+↑` |
 | Page down | `PgDn` | `Alt+↓` |
 | Back one character | `Ctrl+B` | `Ctrl+B` |
 
-`Shift+↑`/`Shift+↓` start a mark at the cursor and extend it by whole lines, keeping the visual column; `Esc` clears it. Once a mark exists, any movement extends it, as in nano.
+`Shift+←`/`Shift+→` extend the mark by characters, and `Shift+↑`/`Shift+↓` by lines keeping the visual column, as in a desktop editor; `Esc` clears it. Any movement extends an existing mark, as in nano. `Ctrl+C` copies and then ends the mark, so the next `Ctrl+V` inserts at the cursor.
 
 ## Search
 
@@ -109,7 +110,7 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - `Ctrl+B` is tmux's default prefix; `Ctrl+A` is screen's.
 - `Ctrl+Shift+<letter>` is unreliable on legacy terminals: there is no `Ctrl+Shift+Z` redo.
 - To select text with the terminal natively, hold `Shift` while dragging.
-- nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file.
+- nnano uses the mouse when the `mouse` option is on (the default): click places the cursor, drag marks, `Alt`+drag marks a rectangle, the wheel scrolls without moving the cursor, and clicking the scrollbar on the right jumps to that part of the file. Releasing the button copies the marked text to the internal register and to the system clipboard (OSC 52); the highlight stays until you click elsewhere or press `Esc`.
 - The status bar shows `line:column/total`: the cursor line, its visual column and the document's total line count.
 - Undo groups: typing is grouped by word and by a 400 ms pause; cut, paste, save and a buffer switch close the group. "Replace all" is one undo step.
 - `Ctrl+H` opens the shortcut reference. Backspace is the terminal's Backspace key (`0x7F`): if your terminal sends `0x08` for Backspace, that key opens help — set it to send `0x7F`.
@@ -122,5 +123,5 @@ Unchanged: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl+B`,
 - `Ctrl+R` re-reads this buffer's file from disk and replaces the text; the undo history of the old text is dropped. With unsaved changes it asks once (`Ctrl+R` again reloads, `Ctrl+S` saves).
 - `Alt+I` asks for a file and inserts its text at the cursor as one undo step; `Tab` completes the path. The buffer keeps its own name and encoding.
 - While a buffer has unsaved changes, nnano writes a recovery snapshot 2 s after the last edit under `$XDG_STATE_HOME/nnano/recovery/`. A crash or a killed SSH session is restored automatically on the next start (`recovered unsaved changes for …`); saving or a clean exit deletes it.
-- `Ctrl+C` and `Alt+6` always copy into the internal register. Enable the `osc52` option (`--osc52`) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar.
+- `Ctrl+C` and `Alt+6` always copy into the internal register. Enable the `osc52` option (`--osc52`) to also send the copy to the system clipboard, capped at 64 KiB; truncation is reported in the status bar. The status bar reports the copied size, and `Ctrl+V` on an empty register says so.
 - `Ctrl+J` re-wraps the paragraph around the cursor (or the marked lines) to the width of the text area, keeping the first line's indent. It is one undo step.

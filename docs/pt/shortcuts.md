@@ -48,12 +48,13 @@ A coluna *Alternativa* é o atalho herdado do nano, quando existe.
 | Primeira linha | `Alt+\` | `Alt+\` |
 | Última linha | `Alt+/` | `Alt+/` |
 | Uma palavra à esquerda / direita | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
-| Estender a seleção acima / abaixo | `Shift+↑` / `Shift+↓` | — |
+| Estender a seleção por caractere | `Shift+←` / `Shift+→` | — |
+| Estender a seleção por linha | `Shift+↑` / `Shift+↓` | — |
 | Uma página acima | `PgUp` | `Alt+↑` |
 | Uma página abaixo | `PgDn` | `Alt+↓` |
 | Um caractere atrás | `Ctrl+B` | `Ctrl+B` |
 
-`Shift+↑`/`Shift+↓` iniciam a marca no cursor e a estendem por linhas inteiras, mantendo a coluna visual; `Esc` limpa a marca. Com uma marca ativa, qualquer movimento a estende, como no nano.
+`Shift+←`/`Shift+→` estendem a marca por caracteres e `Shift+↑`/`Shift+↓` por linhas mantendo a coluna visual, como em um editor de desktop; `Esc` limpa a marca. Com uma marca ativa, qualquer movimento a estende, como no nano. `Ctrl+C` copia e depois limpa a marca, então o próximo `Ctrl+V` insere no cursor.
 
 ## Busca
 
@@ -109,7 +110,7 @@ Sem mudanças: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+B` é o prefixo padrão do tmux; `Ctrl+A`, do screen.
 - `Ctrl+Shift+<letra>` não é confiável em terminais antigos: não existe `Ctrl+Shift+Z` para refazer.
 - Para selecionar texto com o terminal, segure `Shift` ao arrastar.
-- O nnano usa o mouse quando a opção `mouse` está ligada (o padrão): clique posiciona o cursor, arrastar marca, `Alt`+arrastar marca um retângulo, a roda rola sem mover o cursor e clicar na barra à direita salta para essa parte do arquivo.
+- O nnano usa o mouse quando a opção `mouse` está ligada (o padrão): clique posiciona o cursor, arrastar marca, `Alt`+arrastar marca um retângulo, a roda rola sem mover o cursor e clicar na barra à direita salta para essa parte do arquivo. Soltar o botão copia o texto marcado para o registro interno e para a área de transferência do sistema (OSC 52); a marca continua visível até clicar noutro lugar ou premir `Esc`.
 - A barra de status mostra `linha:coluna/total`: a linha do cursor, sua coluna visual e o total de linhas do documento.
 - Grupos de desfazer: a digitação é agrupada por palavra e por uma pausa de 400 ms; cortar, colar, salvar e trocar de buffer fecham o grupo. "Substituir tudo" é um único passo.
 - `Ctrl+H` abre a referência de atalhos. Backspace é a tecla Backspace do terminal (`0x7F`): se o seu terminal envia `0x08`, essa tecla abre a ajuda — configure-o para enviar `0x7F`.
@@ -122,5 +123,5 @@ Sem mudanças: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+R` relê do disco o arquivo deste buffer e substitui o texto; o histórico de desfazer do texto anterior é descartado. Com alterações não salvas, pergunta uma vez (`Ctrl+R` de novo recarrega, `Ctrl+S` salva).
 - `Alt+I` pede um arquivo e insere o texto dele no cursor como um único passo de desfazer; `Tab` completa o caminho. O buffer mantém o próprio nome e codificação.
 - Enquanto um buffer tem alterações não salvas, o nnano grava um instantâneo de recuperação 2 s após a última edição em `$XDG_STATE_HOME/nnano/recovery/`. Uma queda ou uma sessão SSH morta é restaurada automaticamente na próxima abertura (`recovered unsaved changes for …`); salvar ou sair limpo o apaga.
-- `Ctrl+C` e `Alt+6` sempre copiam para o registro interno. Ligue a opção `osc52` (`--osc52`) para enviar também a cópia para a área de transferência do sistema, limitada a 64 KiB; um truncamento é avisado na barra de status.
+- `Ctrl+C` e `Alt+6` sempre copiam para o registro interno. Ligue a opção `osc52` (`--osc52`) para enviar também a cópia para a área de transferência do sistema, limitada a 64 KiB; um truncamento é avisado na barra de status. A barra mostra quanto foi copiado, e `Ctrl+V` com o registro vazio avisa.
 - `Ctrl+J` reflui o parágrafo em volta do cursor (ou as linhas marcadas) para a largura da área de texto, mantendo a indentação da primeira linha. É um único passo de desfazer.

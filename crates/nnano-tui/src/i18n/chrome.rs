@@ -483,6 +483,19 @@ pub const CHROME: &[Entry] = &[
         "papan klip dipotong hingga {} KiB",
         "クリップボードを {} KiB に切り詰めました",
     ]),
+    entry!("copied {} chars" => [
+        "copied {} chars", "已复制 {} 个字符", "{} अक्षर कॉपी किए",
+        "copiados {} caracteres", "نُسخ {} حرفًا",
+        "{} caractères copiés", "{} অক্ষর কপি হয়েছে",
+        "{} caracteres copiados", "{} karakter disalin",
+        "{} 文字をコピーしました",
+    ]),
+    entry!("nothing to paste" => [
+        "nothing to paste", "没有可粘贴的内容", "पेस्ट करने के लिए कुछ नहीं",
+        "nada que pegar", "لا شيء للصق", "rien à coller",
+        "পেস্ট করার কিছু নেই", "nada para colar", "tidak ada yang ditempel",
+        "貼り付けるものがありません",
+    ]),
     entry!("recovery: {}" => [
         "recovery: {}", "恢复：{}", "रिकवरी: {}", "recuperación: {}",
         "الاستعادة: {}", "récupération : {}", "পুনরুদ্ধার: {}",

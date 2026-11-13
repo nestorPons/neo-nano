@@ -48,12 +48,13 @@ Kolom *Alternatif* adalah pintasan warisan nano, bila ada.
 | Baris pertama | `Alt+\` | `Alt+\` |
 | Baris terakhir | `Alt+/` | `Alt+/` |
 | Satu kata ke kiri / kanan | `Ctrl+←` / `Ctrl+→` | `Alt+←` / `Alt+→` |
-| Perluas pilihan ke atas / bawah | `Shift+↑` / `Shift+↓` | — |
+| Perluas pilihan per karakter | `Shift+←` / `Shift+→` | — |
+| Perluas pilihan per baris | `Shift+↑` / `Shift+↓` | — |
 | Satu halaman ke atas | `PgUp` | `Alt+↑` |
 | Satu halaman ke bawah | `PgDn` | `Alt+↓` |
 | Satu karakter mundur | `Ctrl+B` | `Ctrl+B` |
 
-`Shift+↑`/`Shift+↓` memulai tanda di kursor dan memperluasnya per baris sambil mempertahankan kolom visual; `Esc` menghapusnya. Saat tanda aktif, setiap gerakan memperluasnya, seperti di nano.
+`Shift+←`/`Shift+→` memperluas tanda per karakter dan `Shift+↑`/`Shift+↓` per baris sambil mempertahankan kolom visual, seperti di editor desktop; `Esc` menghapusnya. Saat tanda aktif, setiap gerakan memperluasnya, seperti di nano. `Ctrl+C` menyalin lalu menghapus tanda, jadi `Ctrl+V` berikutnya menyisipkan di kursor.
 
 ## Pencarian
 
@@ -109,7 +110,7 @@ Tidak berubah: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+B` adalah awalan bawaan tmux; `Ctrl+A`, milik screen.
 - `Ctrl+Shift+<huruf>` tidak andal di terminal lama: tidak ada `Ctrl+Shift+Z` untuk mengulangi.
 - Untuk memilih teks dengan terminal, tahan `Shift` saat menyeret.
-- nnano memakai mouse bila opsi `mouse` aktif (bawaan): klik meletakkan kursor, seret menandai, `Alt`+seret menandai persegi, roda menggulir tanpa memindahkan kursor, dan mengklik bilah gulir di kanan melompat ke bagian berkas itu.
+- nnano memakai mouse bila opsi `mouse` aktif (bawaan): klik meletakkan kursor, seret menandai, `Alt`+seret menandai persegi, roda menggulir tanpa memindahkan kursor, dan mengklik bilah gulir di kanan melompat ke bagian berkas itu. Melepas tombol menyalin teks yang ditandai ke register internal dan ke papan klip sistem (OSC 52); tanda tetap terlihat sampai Anda mengklik di tempat lain atau menekan `Esc`.
 - Bilah status menampilkan `baris:kolom/total`: baris kursor, kolom visualnya, dan jumlah total baris dokumen.
 - Grup urungkan: pengetikan dikelompokkan per kata dan per jeda 400 ms; potong, tempel, simpan, dan pindah buffer menutup grup. "Ganti semua" adalah satu langkah.
 - `Ctrl+H` membuka referensi pintasan. Backspace adalah tombol Backspace terminal (`0x7F`): bila terminal Anda mengirim `0x08`, tombol itu membuka bantuan — atur agar mengirim `0x7F`.
@@ -122,5 +123,5 @@ Tidak berubah: `Ctrl+K`, `Ctrl+U`, `Ctrl+E`, `Ctrl+D`, `Ctrl+J`, `Ctrl+L`, `Ctrl
 - `Ctrl+R` membaca ulang berkas buffer ini dari disk dan mengganti teksnya; riwayat urungkan teks lama dibuang. Jika ada perubahan belum disimpan, ia bertanya sekali (`Ctrl+R` lagi memuat ulang, `Ctrl+S` menyimpan).
 - `Alt+I` meminta berkas lalu menyisipkan teksnya di kursor sebagai satu langkah urungkan; `Tab` melengkapi jalurnya. Buffer tetap memakai nama dan pengodeannya sendiri.
 - Selama buffer punya perubahan belum disimpan, nnano menulis cuplikan pemulihan 2 detik setelah suntingan terakhir di `$XDG_STATE_HOME/nnano/recovery/`. Kecelakaan atau sesi SSH yang terbunuh dipulihkan otomatis saat mulai berikutnya (`recovered unsaved changes for …`); menyimpan atau keluar bersih menghapusnya.
-- `Ctrl+C` dan `Alt+6` selalu menyalin ke register internal. Aktifkan opsi `osc52` (`--osc52`) untuk juga mengirim salinan ke papan klip sistem, maksimum 64 KiB; pemotongan dilaporkan di bilah status.
+- `Ctrl+C` dan `Alt+6` selalu menyalin ke register internal. Aktifkan opsi `osc52` (`--osc52`) untuk juga mengirim salinan ke papan klip sistem, maksimum 64 KiB; pemotongan dilaporkan di bilah status. Baris status melaporkan ukuran yang disalin, dan `Ctrl+V` pada register kosong memberi tahu.
 - `Ctrl+J` membungkus ulang paragraf di sekitar kursor (atau baris bertanda) selebar area teks, mempertahankan indentasi baris pertama. Ini satu langkah urungkan.

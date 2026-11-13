@@ -372,7 +372,8 @@ pub const KEYMAP: &[Binding] = &[
         "One page down",
     ),
     // Word movement must precede the plain arrows for the same reason: a row
-    // matches when its modifiers are a subset of the event's.
+    // matches when its modifiers are a subset of the event's. `Ctrl+Shift+←`
+    // therefore stays a word move instead of becoming a character selection.
     bind(
         KeyCode::Left,
         KeyModifiers::CONTROL,
@@ -401,6 +402,24 @@ pub const KEYMAP: &[Binding] = &[
         Group::Move,
         "Go to line (nano)",
     ),
+    // Shift+arrows start the mark and extend it, as in a desktop editor. They
+    // must precede the plain arrows: a row matches when its modifiers are a
+    // subset of the event's, so `Shift+Left` would otherwise land on
+    // `MoveLeft`.
+    bind(
+        KeyCode::Left,
+        KeyModifiers::SHIFT,
+        Action::SelectLeft,
+        Group::Move,
+        "Extend the mark one character left",
+    ),
+    bind(
+        KeyCode::Right,
+        KeyModifiers::SHIFT,
+        Action::SelectRight,
+        Group::Move,
+        "Extend the mark one character right",
+    ),
     bind(
         KeyCode::Left,
         KeyModifiers::NONE,
@@ -415,9 +434,8 @@ pub const KEYMAP: &[Binding] = &[
         Group::Move,
         "One character right",
     ),
-    // Shift+arrows start the mark and extend it, editor-style. They must precede
-    // the plain arrows: a row matches when its modifiers are a subset of the
-    // event's, so `Shift+Up` would otherwise land on `MoveUp`.
+    // `Shift+↑`/`Shift+↓` extend the mark by whole lines, keeping the wanted
+    // visual column; they need the same precedence for the same reason.
     bind(
         KeyCode::Up,
         KeyModifiers::SHIFT,
@@ -704,6 +722,11 @@ mod tests {
             (plain(KeyCode::Down), Action::MoveDown),
             (key(KeyCode::Up, KeyModifiers::SHIFT), Action::SelectUp),
             (key(KeyCode::Down, KeyModifiers::SHIFT), Action::SelectDown),
+            (key(KeyCode::Left, KeyModifiers::SHIFT), Action::SelectLeft),
+            (
+                key(KeyCode::Right, KeyModifiers::SHIFT),
+                Action::SelectRight,
+            ),
             (plain(KeyCode::Home), Action::MoveLineStart),
             (plain(KeyCode::End), Action::MoveLineEnd),
             (plain(KeyCode::PageUp), Action::PageUp),

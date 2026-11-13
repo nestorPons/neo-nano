@@ -7,10 +7,13 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 ### Added
 
 - Project website at <https://nestorpons.github.io/neo-nano/>: a dependency-free terminal-retro page in English (what it is, screenshot, install paths, full key reference, author) published from `docs/` on `main` with GitHub Pages — no build step and no GitHub Actions. A selector translates it in place to the app's ten languages with the browser's Google Translator API, right-to-left for Arabic.
+- `Shift+←` / `Shift+→` extend the mark by characters, the horizontal twin of `Shift+↑` / `Shift+↓` (which extend it by lines, keeping the visual column): the first press starts the mark at the cursor, later presses move one character and cross the line break, and the four keys share one mark and grow it in both axes. Inside a panel or a prompt the same keys move the highlight or the prompt cursor.
 - `Shift+↑` / `Shift+↓` extend the mark by whole lines, editor-style: the first press starts the mark at the cursor, later presses grow the selection and keep the wanted visual column. Inside a panel the same keys move the highlighted row.
 - A one-column scrollbar on the right edge of the text area, with a proportional thumb; clicking it jumps to that part of the file without moving the cursor. The column is reserved, so the text width does not change when a file grows past the screen.
 - A built-in grammar set covers the most common languages, so highlighting works without nano installed: html/htmx/vue/svelte/astro, js/ts/tsx/jsx/jx, php/phtml, go, css/scss/sass/less, json, xml/svg, yaml, toml, ini, dotenv, Dockerfile, ignore files, markdown, shell, python, rust, c/c++, java and sql. A grammar with the same name in a user or distro directory wins.
 - The status bar now shows `line:column/total`, adding the document's line count to the cursor position.
+- Copy reports `copied N chars` in the status bar and ends the mark, so `Ctrl+V` inserts at the cursor instead of replacing the region a still-active mark dragged along; `Ctrl+V` on an empty register says `nothing to paste`.
+- Copy on select: releasing the left mouse button after dragging over text copies the mark to the internal register and to the system clipboard (OSC 52), keeps the highlight and reports the size. It does not wait for `--osc52`; `Ctrl+C` still does.
 
 ## [0.1.1] — 2026-11-09
 
